@@ -1,0 +1,8 @@
+%% -*- mode: erlang -*-
+%% vi: set ft=erlang :
+
+{application, erlcql,
+ [{description, "Cassandra native protocol CQL client"},
+  {vsn, "0.1.0"},
+  {applications, [kernel,
+                  stdlib]}]}.
