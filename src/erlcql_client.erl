@@ -52,10 +52,14 @@
 -define(DEFAULT_COMPRESSION, false).
 -define(DEFAULT_TRACING, false).
 -define(DEFAULT_CONSISTENCY, any).
+-define(DEFAULT_USERNAME, <<"cassandra">>).
+-define(DEFAULT_PASSWORD, <<"cassandra">>).
 
 -record(state, {
           socket :: port(),
           async_ets :: integer(),
+          credentials = {?DEFAULT_USERNAME,
+                         ?DEFAULT_PASSWORD} :: {bitstring(), bitstring()},
           flags = {?DEFAULT_COMPRESSION,
                    ?DEFAULT_TRACING} :: {boolean(), boolean()},
           streams = lists:seq(1, 127) :: [integer()],
@@ -113,12 +117,17 @@ init({Host, Opts}) ->
             Tracing = get_opt(tracing, Opts, ?DEFAULT_TRACING),
             Flags = {Compression, Tracing},
 
+            Username = get_opt(username, Opts, ?DEFAULT_USERNAME),
+            Password = get_opt(password, Opts, ?DEFAULT_PASSWORD),
+            Credentials = {Username, Password},
+
             Startup = erlcql_encode:startup(Compression),
             Frame = erlcql_encode:frame(Startup, Flags, 0),
             ok = gen_tcp:send(Socket, Frame),
 
             {ok, startup, #state{socket = Socket,
                                  flags = Flags,
+                                 credentials = Credentials,
                                  async_ets = AsyncETS}};
         {error, Reason} ->
             ?ERROR("Cannot connect to Cassandra: ~s", [Reason]),
@@ -232,20 +241,34 @@ send(Message, Ref, From, #state{socket = Socket,
 
 parse_ready(Data, #state{parser = Parser,
                          streams = Streams} = State) ->
-
     case erlcql_decode:parse(Data, Parser) of
         {ok, [], NewParser} ->
             {next_state, startup, State#state{parser = NewParser}};
-        {ok, [{0, ready} | Rest], NewParser} ->
-            NewState = handle_responses(Rest, State),
-            {next_state, ready, NewState#state{parser = NewParser,
-                                               streams = [0 | Streams]}};
-        {ok, [Other | _], _NewParser} ->
-            ?ERROR("Received this instead of ready: ~p", [Other]),
+        {ok, [{0, ready}], NewParser} ->
+            {next_state, ready, State#state{parser = NewParser,
+                                            streams = [0 | Streams]}};
+        {ok, [{0, {authenticate, AuthClass}}], NewParser} ->
+            try_auth(AuthClass, State#state{parser = NewParser});
+        {ok, Other, _NewParser} ->
+            ?ERROR("Received this instead of ready/authenticate: ~p", [Other]),
             {stop, {bad_response, Other}, State};
         {error, Reason} ->
             {stop, Reason, State}
     end.
+
+try_auth(<<"org.apache.cassandra.auth.PasswordAuthenticator">>,
+         #state{socket = Socket,
+                credentials = {Username, Password},
+                flags = Flags} = State) ->
+    Map = [{<<"username">>, Username},
+           {<<"password">>, Password}],
+    Credentials = erlcql_encode:credentials(Map),
+    Frame = erlcql_encode:frame(Credentials, Flags, 0),
+    ok = gen_tcp:send(Socket, Frame),
+
+    {next_state, startup, State};
+try_auth(Other, State) ->
+    {stop, {unknown_auth_class, Other}, State}.
 
 parse_response(Data, #state{parser = Parser} = State) ->
     case erlcql_decode:parse(Data, Parser) of
