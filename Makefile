@@ -1,16 +1,24 @@
 APPS = erts kernel stdlib
+PLT = apps.plt
 
-compile:
+compile: get-deps
 	@ rebar compile
 
-dialyzer: build.plt compile
-	dialyzer --plt $< ebin
+get-deps:
+	@ rebar get-deps
 
-build.plt:
-	dialyzer -q --build_plt --apps $(APPS) --output_plt $@
+dialyze: compile $(PLT)
+	@ echo "==> (dialyzer)"
+	@ dialyzer --plt $(PLT) ebin -Wunmatched_returns
+
+$(PLT):
+	@ echo "==> (dialyzer)"
+	@ printf "Building $(PLT) file..."
+	@- dialyzer -q --build_plt --output_plt $(PLT) --apps $(APPS) \
+	   deps/snappy/ebin
+	@ echo " done"
 
 clean:
 	@ rebar clean
 
-.PHONY: compile dialyzer clean
-
+.PHONY: compile get-deps dialyzer clean
