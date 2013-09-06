@@ -53,12 +53,7 @@
                               Extra :: term()}}.
 -type authenticate() :: {authenticate, AuthClass :: bitstring()}.
 -type supported() :: {ok, [{Name :: bitstring(), [Value :: bitstring()]}]}.
--type rows() :: {rows,
-                 Metadata :: {ColumnCount :: integer(),
-                              Keyspace :: bitstring(),
-                              Table :: bitstring(),
-                              Specs :: [{Name :: bitstring(),
-                                         Type :: term()}]},
+-type rows() :: {rows, Metadata :: metadata(),
                  Rows :: {RowCount :: integer(),
                           RowData :: [[bitstring() | binary()]]}}.
 -type set_keyspace() :: {ok, Keyspace :: bitstring()}.
@@ -79,6 +74,9 @@
                   | supported()
                   | result()
                   | event().
+
+-type request() :: {startup | credentials | 'query' | prepare |
+                    execute | options | register, Data :: iolist()}.
 
 %% Enumerations
 

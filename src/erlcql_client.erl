@@ -77,6 +77,7 @@
 %% API
 %%-----------------------------------------------------------------------------
 
+%% @doc Starts the client.
 -spec start_link(bitstring(), proplists:proplist()) ->
           {ok, Pid :: pid()} | {error, Reason :: term()}.
 start_link(Host, Opts) ->
@@ -113,10 +114,10 @@ init({Host, Opts}) ->
     case gen_tcp:connect(Host, Port, ?TCP_OPTS) of
         {ok, Socket} ->
             AsyncETS = ets:new(?ETS_NAME, ?ETS_OPTS),
+
             Compression = get_opt(compression, Opts, ?DEFAULT_COMPRESSION),
             Tracing = get_opt(tracing, Opts, ?DEFAULT_TRACING),
             Flags = {Compression, Tracing},
-
             Username = get_opt(username, Opts, ?DEFAULT_USERNAME),
             Password = get_opt(password, Opts, ?DEFAULT_PASSWORD),
             Credentials = {Username, Password},
@@ -167,7 +168,7 @@ ready(Event, State) ->
 
 ready({_Ref, _}, _From, #state{streams = []} = State) ->
     ?CRITICAL("Too many requests to Cassandra!"),
-    {reply, too_many_request, ready, State};
+    {reply, {error, too_many_requests}, ready, State};
 ready({Ref, {'query', QueryString, Consistency}}, {From, _}, State) ->
     Query = erlcql_encode:'query'(QueryString, Consistency),
     send(Query, Ref, From, State);
@@ -230,6 +231,8 @@ async_call(Pid, Request) ->
             {error, Reason}
     end.
 
+-spec send(request(), reference(), pid(), #state{}) ->
+          {reply, {ok, Stream :: integer()}, ready, NewState :: #state{}}.
 send(Message, Ref, From, #state{socket = Socket,
                                 flags = Flags,
                                 streams = [Stream | Streams],

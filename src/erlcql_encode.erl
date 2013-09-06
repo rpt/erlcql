@@ -18,7 +18,7 @@
 %% FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 %% IN THE SOFTWARE.
 
-%% @doc Native protocol request encoding module.
+%% @doc Native protocol request encoding.
 %% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
 -module(erlcql_encode).
 
@@ -39,8 +39,7 @@
 %%-----------------------------------------------------------------------------
 
 %% @doc Encodes the entire request frame.
--spec frame({atom(), iolist() | binary()}, tuple(), integer()) ->
-          Frame :: iolist().
+-spec frame(request(), tuple(), integer()) -> Frame :: iolist().
 frame({Opcode, Payload}, {Compression, _}, Stream) ->
     OpcodeByte = opcode(Opcode),
     {CompressionBit, Payload2} = maybe_compress(Compression, Payload),
@@ -63,9 +62,9 @@ credentials(Informations) ->
     {credentials, string_map(Informations)}.
 
 %% @doc Encodes the options request message body.
--spec options() -> {options, binary()}.
+-spec options() -> {options, iolist()}.
 options() ->
-    {options, <<>>}.
+    {options, []}.
 
 %% @doc Encodes the query request message body.
 -spec 'query'(bitstring(), consistency()) -> {'query', iolist()}.
@@ -100,7 +99,6 @@ int(X) ->
 short(X) ->
     <<X:?SHORT>>.
 
-%% @doc Unfortunately string/1 was taken.
 -spec string2(bitstring()) -> iolist().
 string2(String) ->
     Length = byte_size(String),

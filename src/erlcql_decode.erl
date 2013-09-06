@@ -232,7 +232,9 @@ ready(Body) ->
 
 -spec authenticate(binary()) -> authenticate().
 authenticate(<<Length:?SHORT, AuthClass:?STRING(Length)>>) ->
-    {authenticate, AuthClass}.
+    {authenticate, AuthClass};
+authenticate(Body) ->
+    throw({error, {invalid_body, authenticate, Body}}).
 
 %% Supported ------------------------------------------------------------------
 
@@ -241,6 +243,8 @@ supported(<<N:?SHORT, Data/binary>>) ->
     Supported = supported_map(N, Data, []),
     {ok, Supported}.
 
+-spec supported_map(integer(), binary(), [{binary(), [binary()]}]) ->
+          Map :: [{binary(), [binary()]}].
 supported_map(0, <<>>, Map) ->
     lists:reverse(Map);
 supported_map(N, <<Length:?SHORT, Key:Length/binary,
@@ -296,6 +300,7 @@ rows(Data) ->
     Rows = rows(RowCount, ColumnCount, RowContent, []),
     {rows, Metadata, {RowCount, Rows}}.
 
+-spec metadata(binary()) -> {metadata(), Rest :: binary()}.
 metadata(<<_:31, 0:1, ColumnCount:?INT, ColumnData/binary>>) ->
     {ColumnSpecs, Rest} = column_specs(ColumnCount, ColumnData, []),
     {{ColumnCount, <<"">>, <<"">>, ColumnSpecs}, Rest};
@@ -307,6 +312,8 @@ metadata(<<_:31, 1:1, ColumnCount:?INT,
 metadata(Body) ->
     throw({error, {invalid_body, {result, rows, metadata}, Body}}).
 
+-spec column_specs(integer(), binary(), column_specs()) ->
+          {column_specs(), Rest :: binary()}.
 column_specs(0, Rest, ColumnSpecs) ->
     {lists:reverse(ColumnSpecs), Rest};
 column_specs(I, <<Length:?SHORT, Name:Length/binary, TypeData/binary>>,
@@ -314,6 +321,7 @@ column_specs(I, <<Length:?SHORT, Name:Length/binary, TypeData/binary>>,
     {Type, Rest} = option(TypeData),
     column_specs(I - 1, Rest, [{Name, Type} | ColumnSpecs]).
 
+-spec option(binary()) -> {option(), Rest :: binary()}.
 option(<<Id:?SHORT, Data/binary>>) ->
     case option_id(Id) of
         custom ->
@@ -328,23 +336,30 @@ option(<<Id:?SHORT, Data/binary>>) ->
             other_option(Other, Data)
     end.
 
+-spec custom_option(binary()) -> {option(), Rest :: binary()}.
 custom_option(<<Length:?SHORT, Value:?STRING(Length), Rest/binary>>) ->
     {{custom, Value}, Rest}.
 
+-spec option_list(binary()) -> {List :: option(), Rest :: binary()}.
 option_list(<<N:?SHORT, Data/binary>>) ->
     {List, Rest} = option_list(N, Data, []),
     {{list, List}, Rest}.
 
+-spec option_list(integer(), binary(), [option()]) ->
+          {Options :: [option()], Rest :: binary()}.
 option_list(0, Rest, Options) ->
     {lists:reverse(Options), Rest};
 option_list(N, Data, Options) ->
     {Option, Rest} = option(Data),
     option_list(N - 1, Rest, [Option | Options]).
 
+-spec option_map(binary()) -> {Map :: option(), Rest :: binary()}.
 option_map(<<N:?SHORT, Data/binary>>) ->
     {Map, Rest} = option_map(N, Data, []),
     {{map, Map}, Rest}.
 
+-spec option_map(integer(), binary(), [{option(), option()}]) ->
+          {Map :: [{option(), option()}], Rest :: binary()}.
 option_map(0, Rest, Options) ->
     {lists:reverse(Options), Rest};
 option_map(N, Data, Options) ->
@@ -352,10 +367,12 @@ option_map(N, Data, Options) ->
     {OptionValue, Rest} = option(Data2),
     option_map(N - 1, Rest, [{OptionKey, OptionValue} | Options]).
 
+-spec option_set(binary()) -> {Set :: option(), Rest :: binary()}.
 option_set(<<N:?SHORT, Data/binary>>) ->
     {Set, Rest} = option_list(N, Data, []),
     {{set, Set}, Rest}.
 
+-spec other_option(option_id(), binary()) -> {option(), Rest :: binary()}.
 other_option(OptionId, Rest) ->
     {OptionId, Rest}.
 
@@ -382,12 +399,16 @@ option_id(16#0021) -> map;
 option_id(16#0022) -> set;
 option_id(OptionId) -> throw({error, {bad_option_id, OptionId}}).
 
+-spec rows(integer(), integer(), binary(), [[binary()]]) ->
+          Rows :: [[binary()]].
 rows(0, _N, <<>>, Rows) ->
     lists:reverse(Rows);
 rows(M, N, Data, Rows) ->
     {Values, Rest} = row_values(N, Data, []),
     rows(M - 1, N, Rest, [Values | Rows]).
 
+-spec row_values(integer(), binary(), [binary()]) ->
+          {Values :: [binary()], Rest :: binary()}.
 row_values(0, Rest, Values) ->
     {lists:reverse(Values), Rest};
 row_values(N, <<-1:?INT, Rest/binary>>, Values) ->
