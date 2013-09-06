@@ -24,7 +24,7 @@
 
 %% API
 -export([new_parser/0,
-         parse/2]).
+         parse/3]).
 
 -include("erlcql.hrl").
 
@@ -38,30 +38,31 @@ new_parser() ->
     #parser{}.
 
 %% @doc Parses given data using a parser.
--spec parse(binary(), parser()) ->
+-spec parse(binary(), parser(), compression()) ->
           {ok, Reponses :: [{Stream :: integer(),
                              Response :: response()}],
            NewParser :: parser()} |
           {error, Reason :: term()}.
-parse(Data, #parser{buffer = Buffer} = Parser) ->
+parse(Data, #parser{buffer = Buffer} = Parser, Compression) ->
     NewBuffer = <<Buffer/binary, Data/binary>>,
     NewParser = Parser#parser{buffer = NewBuffer},
-    run_parser(NewParser, []).
+    run_parser(NewParser, [], Compression).
 
 %%-----------------------------------------------------------------------------
 %% Parser functions
 %%-----------------------------------------------------------------------------
 
--spec run_parser(parser(), [response()]) ->
+-spec run_parser(parser(), [response()], compression()) ->
           {ok, Reponses :: [{Stream :: integer(),
                              Response :: response()}],
            NewParser :: parser()} |
           {error, Reason :: term()}.
-run_parser(#parser{buffer = Buffer} = Parser, Responses) ->
-    case catch decode(Buffer) of
+run_parser(#parser{buffer = Buffer} = Parser, Responses, Compression) ->
+    case catch decode(Buffer, Compression) of
         {ok, Stream, Response, Leftovers} ->
             NewParser = Parser#parser{buffer = Leftovers},
-            run_parser(NewParser, [{Stream, Response} | Responses]);
+            run_parser(NewParser,
+                       [{Stream, Response} | Responses], Compression);
         {error, binary_too_small} ->
             {ok, lists:reverse(Responses), Parser};
         {error, Other} ->
@@ -74,30 +75,40 @@ run_parser(#parser{buffer = Buffer} = Parser, Responses) ->
 %% Decode functions
 %%-----------------------------------------------------------------------------
 
--spec decode(binary()) ->
+-spec decode(binary(), compression()) ->
           {ok, Stream :: integer(), Response :: response(), Rest :: binary()} |
           {error, Reason :: term()}.
-decode(<<?RESPONSE:1, ?VERSION:7, _Flags:8, Stream:?BYTE, Opcode:8,
-         Length:32, Data:Length/binary, Rest/binary>>) ->
+decode(<<?RESPONSE:1, ?VERSION:7, _Flags:7, Decompress:1,
+         Stream:?BYTE, Opcode:8, Length:32, Data:Length/binary,
+         Rest/binary>>, Compression) ->
+    Data2 = maybe_decompress(Decompress, Compression, Data),
     Response = case opcode(Opcode) of
                    error ->
-                       error2(Data);
+                       error2(Data2);
                    ready ->
-                       ready(Data);
+                       ready(Data2);
                    authenticate ->
-                       authenticate(Data);
+                       authenticate(Data2);
                    supported ->
-                       supported(Data);
+                       supported(Data2);
                    result ->
-                       result(Data);
+                       result(Data2);
                    event ->
-                       event(Data)
+                       event(Data2)
                end,
     {ok, Stream, Response, Rest};
-decode(<<_Other:32, Length:32, _Data:Length/binary, _Rest/binary>>) ->
+decode(<<_Other:32, Length:32, _Data:Length/binary,
+         _Rest/binary>>, _Compression) ->
     {error, bad_header};
-decode(_Other) ->
+decode(_Other, _Compression) ->
     {error, binary_too_small}.
+
+-spec maybe_decompress(0 | 1, compression(), binary()) -> binary().
+maybe_decompress(0, _Compression, Data) ->
+    Data;
+maybe_decompress(1, snappy, Data) ->
+    {ok, DecompressedData} = snappy:decompress(Data),
+    DecompressedData.
 
 -spec opcode(integer()) -> response_opcode().
 opcode(16#00) -> error;

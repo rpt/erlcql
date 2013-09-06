@@ -61,7 +61,7 @@
           credentials = {?DEFAULT_USERNAME,
                          ?DEFAULT_PASSWORD} :: {bitstring(), bitstring()},
           flags = {?DEFAULT_COMPRESSION,
-                   ?DEFAULT_TRACING} :: {boolean(), boolean()},
+                   ?DEFAULT_TRACING} :: {atom(), boolean()},
           streams = lists:seq(1, 127) :: [integer()],
           parser = erlcql_decode:new_parser() :: parser()
          }).
@@ -122,7 +122,7 @@ init({Host, Opts}) ->
             Credentials = {Username, Password},
 
             Startup = erlcql_encode:startup(Compression),
-            Frame = erlcql_encode:frame(Startup, Flags, 0),
+            Frame = erlcql_encode:frame(Startup, {false, Tracing}, 0),
             ok = gen_tcp:send(Socket, Frame),
 
             {ok, startup, #state{socket = Socket,
@@ -240,8 +240,9 @@ send(Message, Ref, From, #state{socket = Socket,
     {reply, {ok, Stream}, ready, State#state{streams = Streams}}.
 
 parse_ready(Data, #state{parser = Parser,
+                         flags = {Compression, _},
                          streams = Streams} = State) ->
-    case erlcql_decode:parse(Data, Parser) of
+    case erlcql_decode:parse(Data, Parser, Compression) of
         {ok, [], NewParser} ->
             {next_state, startup, State#state{parser = NewParser}};
         {ok, [{0, ready}], NewParser} ->
@@ -270,8 +271,9 @@ try_auth(<<"org.apache.cassandra.auth.PasswordAuthenticator">>,
 try_auth(Other, State) ->
     {stop, {unknown_auth_class, Other}, State}.
 
-parse_response(Data, #state{parser = Parser} = State) ->
-    case erlcql_decode:parse(Data, Parser) of
+parse_response(Data, #state{parser = Parser,
+                            flags = {Compression, _}} = State) ->
+    case erlcql_decode:parse(Data, Parser, Compression) of
         {ok, Responses, NewParser} ->
             NewState = handle_responses(Responses, State),
             {next_state, ready, NewState#state{parser = NewParser}};

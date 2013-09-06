@@ -41,17 +41,20 @@
 %% @doc Encodes the entire request frame.
 -spec frame({atom(), iolist() | binary()}, tuple(), integer()) ->
           Frame :: iolist().
-frame({Opcode, Payload}, _Flags, Stream) ->
-    FlagsByte = 0, %% TODO: Encode flags
+frame({Opcode, Payload}, {Compression, _}, Stream) ->
     OpcodeByte = opcode(Opcode),
-    Length = int(iolist_size(Payload)),
-    [<<?REQUEST:1, ?VERSION:7>>, FlagsByte, Stream, OpcodeByte,
-     Length, Payload].
+    {CompressionBit, Payload2} = maybe_compress(Compression, Payload),
+    Length = int(iolist_size(Payload2)),
+    [<<?REQUEST:1, ?VERSION:7, 0:7, CompressionBit:1>>,
+     Stream, OpcodeByte, Length, Payload2].
 
 %% @doc Encodes the startup request message body.
--spec startup(atom()) -> {startup, iolist()}.
-startup(_Compression) ->
-    {startup, string_map([{<<"CQL_VERSION">>, ?CQL_VERSION}])}.
+-spec startup(compression()) -> {startup, iolist()}.
+startup(false) ->
+    {startup, string_map([{<<"CQL_VERSION">>, ?CQL_VERSION}])};
+startup(snappy) ->
+    {startup, string_map([{<<"CQL_VERSION">>, ?CQL_VERSION},
+                          {<<"COMPRESSION">>, <<"snappy">>}])}.
 
 %% @doc Encodes the credentials request message body.
 -spec credentials([{K :: bitstring(), V :: bitstring()}]) ->
@@ -159,3 +162,15 @@ event(schema_change) -> <<"SCHEMA_CHANGE">>.
 event_list(Events) ->
     N = length(Events),
     [short(N) | [string2(event(Event)) || Event <- Events]].
+
+%%-----------------------------------------------------------------------------
+%% Internal functions
+%%-----------------------------------------------------------------------------
+
+%% @doc Compresses the payload if compression is enabled.
+-spec maybe_compress(compression(), iolist()) -> {0 | 1, iolist()}.
+maybe_compress(false, Payload) ->
+    {0, Payload};
+maybe_compress(snappy, Payload) ->
+    {ok, CompressedPayload} = snappy:compress(Payload),
+    {1, CompressedPayload}.

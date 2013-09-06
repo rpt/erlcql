@@ -145,6 +145,9 @@
                    | map
                    | set.
 
+-type compression() :: snappy
+                     | false.
+
 %% Others
 
 -type inet() :: {inet:ip_address(), inet:port_number()}.
