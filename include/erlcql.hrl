@@ -190,6 +190,17 @@
 -define(NOTICE(Format, Data), ?INFO(Format, Data)).
 -define(DEBUG(Format, Data), ?INFO(Format, Data)).
 -endif.
+-else.
+-define(ERROR(_Format, _Data), ok).
+-define(EMERGENCY(_Format, _Data), ok).
+-define(ALERT(_Format, _Data), ok).
+-define(CRITICAL(_Format, _Data), ok).
+-define(WARNING(_Format, _Data), ok).
+-define(INFO(_Format, _Data), ok).
+-define(NOTICE(_Format, _Data), ok).
+-define(DEBUG(_Format, _Data), ok).
+-endif.
+
 -define(EMERGENCY(Format), ?EMERGENCY(Format, [])).
 -define(ALERT(Format), ?ALERT(Format, [])).
 -define(CRITICAL(Format), ?CRITICAL(Format, [])).
@@ -198,22 +209,3 @@
 -define(NOTICE(Format), ?NOTICE(Format, [])).
 -define(INFO(Format), ?INFO(Format, [])).
 -define(DEBUG(Format), ?DEBUG(Format, [])).
--else.
--define(ERROR(_Format, _Data), ok).
--define(ERROR(_Format), ok).
--define(EMERGENCY(_Format, _Data), ok).
--define(EMERGENCY(_Format), ok).
--define(ALERT(_Format, _Data), ok).
--define(ALERT(_Format), ok).
--define(CRITICAL(_Format, _Data), ok).
--define(CRITICAL(_Format), ok).
--define(WARNING(_Format, _Data), ok).
--define(WARNING(_Format), ok).
--define(INFO(_Format, _Data), ok).
--define(INFO(_Format), ok).
--define(NOTICE(_Format, _Data), ok).
--define(NOTICE(_Format), ok).
--define(DEBUG(_Format, _Data), ok).
--define(DEBUG(_Format), ok).
--endif.
-
