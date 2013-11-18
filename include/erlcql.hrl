@@ -20,13 +20,14 @@
 
 %% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
 
+-define(APP, erlcql).
+
 %% Directions
 -define(REQUEST, 0).
 -define(RESPONSE, 1).
 
 %% Versions
 -define(VERSION, 1).
--define(CQL_VERSION, <<"3.0.0">>).
 
 %% Encode/decode types
 -define(INT, 4/big-signed-integer-unit:8).

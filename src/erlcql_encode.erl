@@ -24,7 +24,7 @@
 
 %% API
 -export([frame/3]).
--export([startup/1,
+-export([startup/2,
          credentials/1,
          options/0,
          query/2,
@@ -48,11 +48,11 @@ frame({Opcode, Payload}, {Compression, _}, Stream) ->
      Stream, OpcodeByte, Length, Payload2].
 
 %% @doc Encodes the startup request message body.
--spec startup(compression()) -> {startup, iolist()}.
-startup(false) ->
-    {startup, string_map([{<<"CQL_VERSION">>, ?CQL_VERSION}])};
-startup(snappy) ->
-    {startup, string_map([{<<"CQL_VERSION">>, ?CQL_VERSION},
+-spec startup(compression(), bitstring()) -> {startup, iolist()}.
+startup(false, CQLVersion) ->
+    {startup, string_map([{<<"CQL_VERSION">>, CQLVersion}])};
+startup(snappy, CQLVersion) ->
+    {startup, string_map([{<<"CQL_VERSION">>, CQLVersion},
                           {<<"COMPRESSION">>, <<"snappy">>}])}.
 
 %% @doc Encodes the credentials request message body.

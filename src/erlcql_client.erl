@@ -26,9 +26,9 @@
 %% API
 -export([start_link/2]).
 -export([query/3,
-         prepare/2,
          execute/4]).
--export([options/1,
+-export([prepare/2,
+         options/1,
          register/2]).
 
 %% gen_fsm callbacks
@@ -38,8 +38,6 @@
          handle_info/3,
          code_change/4,
          terminate/3]).
-
-%% State callbacks
 -export([startup/2,
          startup/3,
          ready/2,
@@ -47,23 +45,13 @@
 
 -include("erlcql.hrl").
 
-%% Default values
--define(DEFAULT_PORT, 9042).
--define(DEFAULT_COMPRESSION, false).
--define(DEFAULT_TRACING, false).
--define(DEFAULT_CONSISTENCY, any).
--define(DEFAULT_USERNAME, <<"cassandra">>).
--define(DEFAULT_PASSWORD, <<"cassandra">>).
-
 -record(state, {
           socket :: port(),
           async_ets :: integer(),
-          credentials = {?DEFAULT_USERNAME,
-                         ?DEFAULT_PASSWORD} :: {bitstring(), bitstring()},
-          flags = {?DEFAULT_COMPRESSION,
-                   ?DEFAULT_TRACING} :: {atom(), boolean()},
+          credentials :: {bitstring(), bitstring()},
+          flags :: {atom(), boolean()},
           streams = lists:seq(1, 127) :: [integer()],
-          parser = erlcql_decode:new_parser() :: parser()
+          parser :: parser()
          }).
 
 -define(TCP_OPTS, [binary, {active, once}]).
@@ -77,9 +65,8 @@
 %% API
 %%-----------------------------------------------------------------------------
 
-%% @doc Starts the client.
 -spec start_link(string(), proplists:proplist()) ->
-          {ok, Pid :: pid()} | {error, Reason :: term()}.
+          {ok, pid()} | ignore | {error, Reason :: term()}.
 start_link(Host, Opts) ->
     gen_fsm:start_link(?MODULE, {Host, proplists:unfold(Opts)}, []).
 
@@ -110,26 +97,28 @@ register(Pid, Events) ->
 %%-----------------------------------------------------------------------------
 
 init({Host, Opts}) ->
-    Port = get_opt(port, Opts, ?DEFAULT_PORT),
+    Port = get_opt(port, Opts),
     case gen_tcp:connect(Host, Port, ?TCP_OPTS) of
         {ok, Socket} ->
             AsyncETS = ets:new(?ETS_NAME, ?ETS_OPTS),
-
-            Compression = get_opt(compression, Opts, ?DEFAULT_COMPRESSION),
-            Tracing = get_opt(tracing, Opts, ?DEFAULT_TRACING),
+            Compression = get_opt(compression, Opts),
+            Tracing = get_opt(tracing, Opts),
             Flags = {Compression, Tracing},
-            Username = get_opt(username, Opts, ?DEFAULT_USERNAME),
-            Password = get_opt(password, Opts, ?DEFAULT_PASSWORD),
+            CQLVersion = get_opt(cql_version, Opts),
+            Username = get_opt(username, Opts),
+            Password = get_opt(password, Opts),
             Credentials = {Username, Password},
+            Parser = erlcql_decode:new_parser(),
 
-            Startup = erlcql_encode:startup(Compression),
+            Startup = erlcql_encode:startup(Compression, CQLVersion),
             Frame = erlcql_encode:frame(Startup, {false, Tracing}, 0),
             ok = gen_tcp:send(Socket, Frame),
 
             {ok, startup, #state{socket = Socket,
                                  flags = Flags,
                                  credentials = Credentials,
-                                 async_ets = AsyncETS}};
+                                 async_ets = AsyncETS,
+                                 parser = Parser}};
         {error, Reason} ->
             ?ERROR("Cannot connect to Cassandra: ~s", [Reason]),
             {stop, Reason}
@@ -308,11 +297,19 @@ handle_response({Stream, Response}, #state{async_ets = AsyncETS,
 %% Helper functions
 %%-----------------------------------------------------------------------------
 
--spec get_opt(atom(), proplists:proplist(), term()) -> Value :: term().
-get_opt(Opt, Opts, Default) ->
+-spec get_opt(atom(), proplists:proplist()) -> Value :: term().
+get_opt(Opt, Opts) ->
     case lists:keyfind(Opt, 1, Opts) of
         {Opt, Value} ->
             Value;
         false ->
-            Default
+            application:get_env(?APP, Opt, default(Opt))
     end.
+
+-spec default(atom()) -> term().
+default(port) -> 9042;
+default(compression) ->false;
+default(tracing) -> false;
+default(username) -> <<"cassandra">>;
+default(password) -> <<"cassandra">>;
+default(cql_version) -> <<"3.1.1">>.
