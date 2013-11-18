@@ -75,7 +75,7 @@
                   | result()
                   | event().
 
--type request() :: {startup | credentials | 'query' | prepare |
+-type request() :: {startup | credentials | query | prepare |
                     execute | options | register, Data :: iolist()}.
 
 %% Enumerations
