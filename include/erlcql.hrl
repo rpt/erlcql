@@ -148,6 +148,20 @@
 
 %% Others
 
+-type column_specs() :: [{Name :: bitstring(),
+                          Type :: term()}].
+
+-type metadata() :: {ColumnCount :: integer(),
+                     Keyspace :: bitstring(),
+                     Table :: bitstring(),
+                     Specs :: column_specs()}.
+
+-type option() :: option_id()
+                | {list, [option()]}
+                | {map, [{option(), option()}]}
+                | {set, [option()]}
+                | {custom, binary()}.
+
 -type inet() :: {inet:ip_address(), inet:port_number()}.
 
 %%-----------------------------------------------------------------------------

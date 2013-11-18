@@ -1,4 +1,5 @@
 *.beam
-ebin/
-build.plt
+/ebin/
+/deps/
+apps.plt
 erl_crash.dump

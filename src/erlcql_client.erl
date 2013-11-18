@@ -78,7 +78,7 @@
 %%-----------------------------------------------------------------------------
 
 %% @doc Starts the client.
--spec start_link(bitstring(), proplists:proplist()) ->
+-spec start_link(string(), proplists:proplist()) ->
           {ok, Pid :: pid()} | {error, Reason :: term()}.
 start_link(Host, Opts) ->
     gen_fsm:start_link(?MODULE, {Host, proplists:unfold(Opts)}, []).
