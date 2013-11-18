@@ -5,6 +5,7 @@ Cassandra native protocol CQL Erlang client.
 ## How to use it?
 
  * Run `make` to build.
+ * Run `make test` to test.
  * Add as a dependency to your `rebar.config`:
 
 ``` erlang
