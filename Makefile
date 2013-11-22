@@ -23,7 +23,7 @@ $(PLT):
 	@ echo " done"
 
 test: compile
-	@ rebar skip_deps=true ct
+	@ rebar skip_deps=true eunit ct
 
 console:
 	@ erl -pa ebin deps/*/ebin
