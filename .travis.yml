@@ -1,6 +1,6 @@
 language: erlang
 otp_release:
    - R16B
-script: "make test"
+script: make test
 services:
    - cassandra
