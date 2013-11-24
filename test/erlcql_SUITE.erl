@@ -74,21 +74,22 @@ all() ->
 
 create_keyspace(Config) ->
     Pid = get_pid(Config),
-    {ok, {created, ?KEYSPACE, _}} = q(Pid, ?CREATE_KEYSPACE),
+    {ok, created} = q(Pid, ?CREATE_KEYSPACE),
     Keyspaces = get_keyspaces(Pid),
     true == lists:member([?KEYSPACE], Keyspaces).
 
 drop_keyspace(Config) ->
     Pid = get_pid(Config),
-    {ok, {dropped, ?KEYSPACE, _}} = q(Pid, ?DROP_KEYSPACE),
+    {ok, dropped} = q(Pid, ?DROP_KEYSPACE),
     Keyspaces = get_keyspaces(Pid),
     false == lists:member([?KEYSPACE], Keyspaces).
 
 insert(Config) ->
     Pid = get_pid(Config),
-    void = q(Pid, <<"INSERT INTO t (k, v) VALUES (1, 'one')">>),
+    {ok, void} = q(Pid, <<"INSERT INTO t (k, v) VALUES (1, 'one')">>),
     Rows = q(Pid, <<"SELECT * FROM t">>),
-    {rows, _, {1, [[<<0, 0, 0, 1>>, <<"one">>]]}} = Rows.
+    {ok, {[[<<0, 0, 0, 1>>, <<"one">>]],
+          [{<<"k">>, int}, {<<"v">>, varchar}]}} = Rows.
 
 %% Helpers --------------------------------------------------------------------
 
@@ -100,5 +101,5 @@ q(Pid, String) ->
 
 get_keyspaces(Pid) ->
     Check = <<"SELECT keyspace_name FROM system.schema_keyspaces">>,
-    {rows, _, {_, Keyspaces}} = q(Pid, Check),
+    {ok, {Keyspaces, _}} = q(Pid, Check),
     Keyspaces.

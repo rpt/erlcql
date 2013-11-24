@@ -28,6 +28,10 @@
 
 -include("erlcql.hrl").
 
+-define(BYTE, 1/big-signed-integer-unit:8).
+-define(BYTE2, 2/big-signed-integer-unit:8).
+-define(STRING(Length), Length/bytes).
+
 %%-----------------------------------------------------------------------------
 %% API functions
 %%-----------------------------------------------------------------------------
@@ -233,6 +237,8 @@ supported_map(N, <<Length:?SHORT, Key:Length/binary,
     {Values, Rest} = supported_list(M, Data, []),
     supported_map(N - 1, Rest, [{Key, Values} | Map]).
 
+-spec supported_list(integer(), binary(), [binary()]) ->
+          {List :: [binary()], Rest :: binary()}.
 supported_list(0, Rest, Values) ->
     {lists:reverse(Values), Rest};
 supported_list(N, <<Length:?SHORT, Value:Length/binary,
@@ -265,37 +271,37 @@ result_kind(16#0005) -> schema_change.
 
 %% Result: Void
 
--spec void(binary()) -> void.
+-spec void(binary()) -> void().
 void(<<>>) ->
-    void.
+    {ok, void}.
 
 %% Result: Rows
 
 -spec rows(binary()) -> rows().
 rows(Data) ->
-    {{ColumnCount, _, _, _} = Metadata, RowData} = metadata(Data),
+    {ColumnCount, ColumnSpecs, RowData} = metadata(Data),
     <<RowCount:?INT, RowContent/binary>> = RowData,
     Rows = rows(RowCount, ColumnCount, RowContent, []),
-    {rows, Metadata, {RowCount, Rows}}.
+    {ok, {Rows, ColumnSpecs}}.
 
--spec metadata(binary()) -> {metadata(), Rest :: binary()}.
+-spec metadata(binary()) -> {integer(), column_specs(), Rest :: binary()}.
 metadata(<<_:31, 0:1, ColumnCount:?INT, ColumnData/binary>>) ->
     {ColumnSpecs, Rest} = column_specs(ColumnCount, ColumnData, []),
-    {{ColumnCount, <<"">>, <<"">>, ColumnSpecs}, Rest};
+    {ColumnCount, ColumnSpecs, Rest};
 metadata(<<_:31, 1:1, ColumnCount:?INT,
-           Length:?SHORT, Keyspace:?STRING(Length),
-           Length2:?SHORT, Table:?STRING(Length2), ColumnData/binary>>) ->
+           Length:?SHORT, _Keyspace:?STRING(Length),
+           Length2:?SHORT, _Table:?STRING(Length2), ColumnData/binary>>) ->
     {ColumnSpecs, Rest} = column_specs(ColumnCount, ColumnData, []),
-    {{ColumnCount, Keyspace, Table, ColumnSpecs}, Rest}.
+    {ColumnCount, ColumnSpecs, Rest}.
 
 -spec column_specs(integer(), binary(), column_specs()) ->
           {column_specs(), Rest :: binary()}.
 column_specs(0, Rest, ColumnSpecs) ->
     {lists:reverse(ColumnSpecs), Rest};
-column_specs(I, <<Length:?SHORT, Name:Length/binary, TypeData/binary>>,
+column_specs(N, <<Length:?SHORT, Name:Length/binary, TypeData/binary>>,
              ColumnSpecs) ->
     {Type, Rest} = option(TypeData),
-    column_specs(I - 1, Rest, [{Name, Type} | ColumnSpecs]).
+    column_specs(N - 1, Rest, [{Name, Type} | ColumnSpecs]).
 
 -spec option(binary()) -> {option(), Rest :: binary()}.
 option(<<Id:?SHORT, Data/binary>>) ->
@@ -407,9 +413,9 @@ prepared(<<Length:?SHORT, QueryId:Length/binary>>) ->
 
 -spec schema_change(binary()) -> schema_change().
 schema_change(<<Length:?SHORT, Type:Length/binary,
-                Length2:?SHORT, Keyspace:Length2/binary,
-                Length3:?SHORT, Table:Length3/binary>>) ->
-    {ok, {schema_change_type(Type), Keyspace, Table}}.
+                Length2:?SHORT, _Keyspace:Length2/binary,
+                Length3:?SHORT, _Table:Length3/binary>>) ->
+    {ok, schema_change_type(Type)}.
 
 %% Event ----------------------------------------------------------------------
 

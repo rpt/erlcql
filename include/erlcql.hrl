@@ -21,21 +21,15 @@
 %% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
 
 -define(APP, erlcql).
+-define(VERSION, 1).
 
 %% Directions
 -define(REQUEST, 0).
 -define(RESPONSE, 1).
 
-%% Versions
--define(VERSION, 1).
-
 %% Encode/decode types
 -define(INT, 4/big-signed-integer-unit:8).
 -define(SHORT, 2/big-unsigned-integer-unit:8).
--define(BYTE, 1/big-signed-integer-unit:8).
--define(BYTE2, 2/big-signed-integer-unit:8).
--define(LENGTH, 4/big-unsigned-integer-unit:8).
--define(STRING(Length), Length/bytes).
 
 %% Parser
 -record(parser, {
@@ -47,46 +41,46 @@
 %% Types
 %%-----------------------------------------------------------------------------
 
-%% Responses
+-type request() :: {Opcode :: request_opcode(), Data :: iolist()}.
+-type request_opcode() :: startup
+                        | credentials
+                        | query
+                        | prepare
+                        | execute
+                        | options
+                        | register.
+
+-type response() :: cql_error()
+                  | ready()
+                  | authenticate()
+                  | supported()
+                  | event()
+                  | result().
 
 -type cql_error() :: {error, {Code :: error_code(),
                               Message :: bitstring(),
                               Extra :: term()}}.
+-type ready() :: ready.
 -type authenticate() :: {authenticate, AuthClass :: bitstring()}.
 -type supported() :: {ok, [{Name :: bitstring(), [Value :: bitstring()]}]}.
--type rows() :: {rows, Metadata :: metadata(),
-                 Rows :: {RowCount :: integer(),
-                          RowData :: [[bitstring() | binary()]]}}.
--type set_keyspace() :: {ok, Keyspace :: bitstring()}.
--type prepared() :: {ok, PreparedQueryId :: binary()}.
--type schema_change() :: {ok, {created | updated | dropped,
-                               Keyspace :: bitstring(),
-                               Table :: bitstring()}}.
--type result() :: void
+-type event() :: {event, {Kind :: atom(), Type :: atom(), Extra :: term()}}.
+-type result() :: void()
                 | rows()
                 | set_keyspace()
                 | prepared()
                 | schema_change().
--type event() :: {event, {Kind :: atom(), Type :: atom(), Extra :: term()}}.
 
--type response() :: cql_error()
-                  | ready
-                  | authenticate()
-                  | supported()
-                  | result()
-                  | event().
-
--type request() :: {startup | credentials | query | prepare |
-                    execute | options | register, Data :: iolist()}.
-
-%% Enumerations
+-type void() :: {ok, void}.
+-type rows() :: {ok, {Rows :: [[binary()]], Cols :: column_specs()}}.
+-type set_keyspace() :: {ok, Keyspace :: bitstring()}.
+-type prepared() :: {ok, PreparedQueryId :: binary()}.
+-type schema_change() :: {ok, created | updated | dropped}.
 
 -type response_opcode() :: error
                          | ready
                          | authenticate
                          | supported
                          | result
-                         | execute
                          | event.
 
 -type consistency() :: any
@@ -144,24 +138,16 @@
                    | map
                    | set.
 
--type compression() :: snappy
-                     | false.
-
-%% Others
-
--type column_specs() :: [{Name :: bitstring(),
-                          Type :: term()}].
-
--type metadata() :: {ColumnCount :: integer(),
-                     Keyspace :: bitstring(),
-                     Table :: bitstring(),
-                     Specs :: column_specs()}.
-
 -type option() :: option_id()
                 | {list, [option()]}
                 | {map, [{option(), option()}]}
                 | {set, [option()]}
-                | {custom, binary()}.
+                | {custom, bitstring()}.
+
+-type compression() :: snappy
+                     | false.
+
+-type column_specs() :: [{Name :: bitstring(), Type :: option()}].
 
 -type inet() :: {inet:ip_address(), inet:port_number()}.
 
