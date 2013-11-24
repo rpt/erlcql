@@ -39,8 +39,8 @@ new_parser() ->
 
 %% @doc Parses given data using a parser.
 -spec parse(binary(), parser(), compression()) ->
-          {ok, Reponses :: [{Stream :: integer(),
-                             Response :: response()}],
+          {ok, Responses :: [{Stream :: integer(),
+                              Response :: response()}],
            NewParser :: parser()} |
           {error, Reason :: term()}.
 parse(Data, #parser{buffer = Buffer} = Parser, Compression) ->
@@ -52,13 +52,13 @@ parse(Data, #parser{buffer = Buffer} = Parser, Compression) ->
 %% Parser functions
 %%-----------------------------------------------------------------------------
 
--spec run_parser(parser(), [response()], compression()) ->
-          {ok, Reponses :: [{Stream :: integer(),
-                             Response :: response()}],
+-spec run_parser(parser(), [{integer(), response()}], compression()) ->
+          {ok, Responses :: [{Stream :: integer(),
+                              Response :: response()}],
            NewParser :: parser()} |
           {error, Reason :: term()}.
 run_parser(#parser{buffer = Buffer} = Parser, Responses, Compression) ->
-    case catch decode(Buffer, Compression) of
+    case decode(Buffer, Compression) of
         {ok, Stream, Response, Leftovers} ->
             NewParser = Parser#parser{buffer = Leftovers},
             run_parser(NewParser,
@@ -66,9 +66,7 @@ run_parser(#parser{buffer = Buffer} = Parser, Responses, Compression) ->
         {error, binary_too_small} ->
             {ok, lists:reverse(Responses), Parser};
         {error, Other} ->
-            {error, Other};
-        {'EXIT', Reason} ->
-            {error, Reason}
+            {error, Other}
     end.
 
 %%-----------------------------------------------------------------------------
@@ -116,8 +114,7 @@ opcode(16#02) -> ready;
 opcode(16#03) -> authenticate;
 opcode(16#06) -> supported;
 opcode(16#08) -> result;
-opcode(16#0c) -> event;
-opcode(Opcode) -> throw({error, {bad_opcode, Opcode}}).
+opcode(16#0c) -> event.
 
 %% Error ----------------------------------------------------------------------
 
@@ -154,8 +151,7 @@ error_code(16#2100) -> unauthorized;
 error_code(16#2200) -> invalid;
 error_code(16#2300) -> config_error;
 error_code(16#2400) -> already_exists;
-error_code(16#2500) -> unprepared;
-error_code(ErrorCode) -> throw({error, {bad_error_code, ErrorCode}}).
+error_code(16#2500) -> unprepared.
 
 -spec unavailable_exception(binary()) ->
           {unavailable_exception, Message :: bitstring(),
@@ -164,9 +160,7 @@ error_code(ErrorCode) -> throw({error, {bad_error_code, ErrorCode}}).
 unavailable_exception(<<Length:?SHORT, Message:Length/binary,
                         Consistency:?SHORT, Required:?INT, Alive:?INT>>) ->
     {unavailable_exception, Message, {consistency(Consistency),
-                                      Required, Alive}};
-unavailable_exception(Body) ->
-    throw({error, {invalid_body, {error, unavailable_exception}, Body}}).
+                                      Required, Alive}}.
 
 -spec write_timeout(binary()) ->
           {write_timeout, Message :: bitstring(),
@@ -176,9 +170,7 @@ write_timeout(<<Length:?SHORT, Message:Length/binary,
                 Consistency:?SHORT, Received:?INT, Blockfor:?INT,
                 Length2:?SHORT, WriteType:Length2/binary>>) ->
     {write_timeout, Message, {consistency(Consistency),
-                              Received, Blockfor, WriteType}};
-write_timeout(Body) ->
-    throw({error, {invalid_body, {error, write_timeout}, Body}}).
+                              Received, Blockfor, WriteType}}.
 
 -spec read_timeout(binary()) ->
           {read_timeout, Message :: bitstring(),
@@ -188,9 +180,7 @@ read_timeout(<<Length:?SHORT, Message:Length/binary, Consistency:?SHORT,
                Received:?INT, Blockfor:?INT, PresentByte:8>>) ->
     Present = PresentByte == 0,
     {read_timeout, Message, {consistency(Consistency),
-                             Received, Blockfor, Present}};
-read_timeout(Body) ->
-    throw({error, {invalid_body, {error, read_timeout}, Body}}).
+                             Received, Blockfor, Present}}.
 
 -spec already_exists(binary()) ->
           {already_exists, Message :: bitstring(),
@@ -198,16 +188,12 @@ read_timeout(Body) ->
 already_exists(<<Length:?SHORT, Message:Length/binary,
                  Length2:?SHORT, Keyspace:Length2/binary,
                  Length3:?SHORT, Table:Length3/binary>>) ->
-    {already_exists, Message, {Keyspace, Table}};
-already_exists(Body) ->
-    throw({error, {invalid_body, {error, already_exists}, Body}}).
+    {already_exists, Message, {Keyspace, Table}}.
 
 -spec other_error(error_code(), binary()) ->
           {Code :: error_code(), Message :: bitstring(), undefined}.
 other_error(ErrorCode, <<Length:?SHORT, Message:Length/binary>>) ->
-    {ErrorCode, Message, undefined};
-other_error(ErrorCode, Body) ->
-    throw({error, {invalid_body, {error, ErrorCode}, Body}}).
+    {ErrorCode, Message, undefined}.
 
 -spec consistency(integer()) -> consistency().
 consistency(0) -> any;
@@ -217,24 +203,19 @@ consistency(3) -> three;
 consistency(4) -> quorum;
 consistency(5) -> all;
 consistency(6) -> local_quorum;
-consistency(7) -> each_quorum;
-consistency(Consistency) -> throw({error, {bad_consistency, Consistency}}).
+consistency(7) -> each_quorum.
 
 %% Ready ----------------------------------------------------------------------
 
 -spec ready(binary()) -> ready.
 ready(<<>>) ->
-    ready;
-ready(Body) ->
-    throw({error, {invalid_body, ready, Body}}).
+    ready.
 
 %% Authenticate ---------------------------------------------------------------
 
 -spec authenticate(binary()) -> authenticate().
 authenticate(<<Length:?SHORT, AuthClass:?STRING(Length)>>) ->
-    {authenticate, AuthClass};
-authenticate(Body) ->
-    throw({error, {invalid_body, authenticate, Body}}).
+    {authenticate, AuthClass}.
 
 %% Supported ------------------------------------------------------------------
 
@@ -280,16 +261,13 @@ result_kind(16#0001) -> void;
 result_kind(16#0002) -> rows;
 result_kind(16#0003) -> set_keyspace;
 result_kind(16#0004) -> prepared;
-result_kind(16#0005) -> schema_change;
-result_kind(Kind) -> throw({error, {bad_result_kind, Kind}}).
+result_kind(16#0005) -> schema_change.
 
 %% Result: Void
 
 -spec void(binary()) -> void.
 void(<<>>) ->
-    void;
-void(Body) ->
-    throw({error, {invalid_body, void, Body}}).
+    void.
 
 %% Result: Rows
 
@@ -308,9 +286,7 @@ metadata(<<_:31, 1:1, ColumnCount:?INT,
            Length:?SHORT, Keyspace:?STRING(Length),
            Length2:?SHORT, Table:?STRING(Length2), ColumnData/binary>>) ->
     {ColumnSpecs, Rest} = column_specs(ColumnCount, ColumnData, []),
-    {{ColumnCount, Keyspace, Table, ColumnSpecs}, Rest};
-metadata(Body) ->
-    throw({error, {invalid_body, {result, rows, metadata}, Body}}).
+    {{ColumnCount, Keyspace, Table, ColumnSpecs}, Rest}.
 
 -spec column_specs(integer(), binary(), column_specs()) ->
           {column_specs(), Rest :: binary()}.
@@ -396,8 +372,7 @@ option_id(16#000f) -> timeuuid;
 option_id(16#0010) -> inet;
 option_id(16#0020) -> list;
 option_id(16#0021) -> map;
-option_id(16#0022) -> set;
-option_id(OptionId) -> throw({error, {bad_option_id, OptionId}}).
+option_id(16#0022) -> set.
 
 -spec rows(integer(), integer(), binary(), [[binary()]]) ->
           Rows :: [[binary()]].
@@ -420,17 +395,13 @@ row_values(N, <<Length:?INT, Value:Length/binary, Rest/binary>>, Values) ->
 
 -spec set_keyspace(binary()) -> set_keyspace().
 set_keyspace(<<Length:?SHORT, Keyspace:Length/binary>>) ->
-    {ok, Keyspace};
-set_keyspace(Body) ->
-    throw({error, {invalid_body, {result, set_keyspace}, Body}}).
+    {ok, Keyspace}.
 
 %% Result: Prepared
 
 -spec prepared(binary()) -> prepared().
 prepared(<<Length:?SHORT, QueryId:Length/binary>>) ->
-    {ok, QueryId};
-prepared(Body) ->
-    throw({error, {invalid_body, {result, prepared}, Body}}).
+    {ok, QueryId}.
 
 %% Result: Schema change
 
@@ -438,9 +409,7 @@ prepared(Body) ->
 schema_change(<<Length:?SHORT, Type:Length/binary,
                 Length2:?SHORT, Keyspace:Length2/binary,
                 Length3:?SHORT, Table:Length3/binary>>) ->
-    {ok, {schema_change_type(Type), Keyspace, Table}};
-schema_change(Body) ->
-    throw({error, {invalid_body, {result, schema_change}, Body}}).
+    {ok, {schema_change_type(Type), Keyspace, Table}}.
 
 %% Event ----------------------------------------------------------------------
 
@@ -459,8 +428,7 @@ event(<<Length:?SHORT, Type:?STRING(Length), Data/binary>>) ->
 -spec event_type(bitstring()) -> event_type().
 event_type(<<"TOPOLOGY_CHANGE">>) -> topology_change;
 event_type(<<"STATUS_CHANGE">>) -> status_change;
-event_type(<<"SCHEMA_CHANGE">>) -> schema_change;
-event_type(Type) -> throw({error, {bad_event_type, Type}}).
+event_type(<<"SCHEMA_CHANGE">>) -> schema_change.
 
 -spec topology_change_event(binary()) ->
           {topology_change, Type :: atom(), Inet :: inet()}.
@@ -469,8 +437,7 @@ topology_change_event(<<Length:?SHORT, Type:?STRING(Length), Data/binary>>) ->
 
 -spec topology_change_type(bitstring()) -> atom().
 topology_change_type(<<"NEW_NODE">>) -> new_node;
-topology_change_type(<<"REMOVED_NODE">>) -> removed_node;
-topology_change_type(Type) -> throw({error, {bad_topology_change_type, Type}}).
+topology_change_type(<<"REMOVED_NODE">>) -> removed_node.
 
 -spec status_change_event(binary()) ->
           {status_change, Type :: atom(), Inet :: inet()}.
@@ -479,8 +446,7 @@ status_change_event(<<Length:?SHORT, Type:?STRING(Length), Data/binary>>) ->
 
 -spec status_change_type(bitstring()) -> atom().
 status_change_type(<<"UP">>) -> up;
-status_change_type(<<"DOWN">>) -> down;
-status_change_type(Type) -> throw({error, {bad_status_change_type, Type}}).
+status_change_type(<<"DOWN">>) -> down.
 
 -spec schema_change_event(binary()) ->
           {schema_change, Type :: atom(),
@@ -493,21 +459,16 @@ schema_change_event(<<Length:?SHORT, Type:?STRING(Length),
 -spec schema_change_type(bitstring()) -> atom().
 schema_change_type(<<"CREATED">>) -> created;
 schema_change_type(<<"UPDATED">>) -> updated;
-schema_change_type(<<"DROPPED">>) -> dropped;
-schema_change_type(Type) -> throw({error, {bad_schema_change_type, Type}}).
+schema_change_type(<<"DROPPED">>) -> dropped.
 
 -spec inet(binary()) -> inet().
 inet(<<Size:?BYTE, Data/binary>>) ->
-    inet(Size, Data);
-inet(Body) ->
-    throw({error, {invalid_body, inet, Body}}).
+    inet(Size, Data).
 
 -spec inet(4 | 16, binary()) -> inet().
 inet(4, <<A:?BYTE, B:?BYTE, C:?BYTE, D:?BYTE, Port:?INT>>) ->
     {{A, B, C, D}, Port};
 inet(16, <<A:?BYTE2, B:?BYTE2, C:?BYTE2, D:?BYTE2,
            E:?BYTE2, F:?BYTE2, G:?BYTE2, H:?BYTE2, Port:?INT>>) ->
-    {{A, B, C, D, E, F, G, H}, Port};
-inet(_, Body) ->
-    throw({error, {invalid_body, inet, Body}}).
+    {{A, B, C, D, E, F, G, H}, Port}.
 
