@@ -9,10 +9,10 @@
 -define(KEYSPACE, <<"erlcql_tests">>).
 
 -define(CREATE_KEYSPACE,
-        <<"CREATE KEYSPACE ", ?KEYSPACE/binary, " WITH replication = ",
-          "{'class': 'SimpleStrategy', 'replication_factor': 1}">>).
--define(DROP_KEYSPACE, <<"DROP KEYSPACE ", ?KEYSPACE/binary>>).
--define(USE_KEYSPACE, <<"USE ", ?KEYSPACE/binary>>).
+        [<<"CREATE KEYSPACE ">>, ?KEYSPACE, <<" WITH replication = ",
+         "{'class': 'SimpleStrategy', 'replication_factor': 1}">>]).
+-define(DROP_KEYSPACE, [<<"DROP KEYSPACE ">>, ?KEYSPACE]).
+-define(USE_KEYSPACE, [<<"USE ">>, ?KEYSPACE]).
 -define(CREATE_TABLE, <<"CREATE TABLE t (k int PRIMARY KEY, v text)">>).
 -define(DROP_TABLE, <<"DROP TABLE t">>).
 

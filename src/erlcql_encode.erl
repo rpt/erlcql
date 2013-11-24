@@ -67,12 +67,12 @@ options() ->
     {options, []}.
 
 %% @doc Encodes the query request message body.
--spec query(bitstring(), consistency()) -> {query, iolist()}.
+-spec query(iolist(), consistency()) -> {query, iolist()}.
 query(QueryString, Consistency) ->
     {query, [long_string(QueryString), consistency(Consistency)]}.
 
 %% @doc Encodes the prepare request message body.
--spec prepare(bitstring()) -> {prepare, iolist()}.
+-spec prepare(iolist()) -> {prepare, iolist()}.
 prepare(QueryString) ->
     {prepare, [long_string(QueryString)]}.
 
@@ -104,9 +104,9 @@ string2(String) ->
     Length = byte_size(String),
     [short(Length), String].
 
--spec long_string(bitstring()) -> iolist().
+-spec long_string(iolist()) -> iolist().
 long_string(String) ->
-    Length = byte_size(String),
+    Length = iolist_size(String),
     [int(Length), String].
 
 -spec bytes(binary() | null) -> iolist().
