@@ -310,54 +310,22 @@ option(<<Id:?SHORT, Data/binary>>) ->
         custom ->
             custom_option(Data);
         list ->
-            option_list(Data);
+            {Option, Rest} = option(Data),
+            {{list, Option}, Rest};
         map ->
-            option_map(Data);
+            {Key, Rest} = option(Data),
+            {Value, Rest2} = option(Rest),
+            {{map, Key, Value}, Rest2};
         set ->
-            option_set(Data);
-        Other ->
-            other_option(Other, Data)
+            {Option, Rest} = option(Data),
+            {{set, Option}, Rest};
+        OptionId ->
+            {OptionId, Data}
     end.
 
 -spec custom_option(binary()) -> {option(), Rest :: binary()}.
 custom_option(<<Length:?SHORT, Value:?STRING(Length), Rest/binary>>) ->
     {{custom, Value}, Rest}.
-
--spec option_list(binary()) -> {List :: option(), Rest :: binary()}.
-option_list(<<N:?SHORT, Data/binary>>) ->
-    {List, Rest} = option_list(N, Data, []),
-    {{list, List}, Rest}.
-
--spec option_list(integer(), binary(), [option()]) ->
-          {Options :: [option()], Rest :: binary()}.
-option_list(0, Rest, Options) ->
-    {lists:reverse(Options), Rest};
-option_list(N, Data, Options) ->
-    {Option, Rest} = option(Data),
-    option_list(N - 1, Rest, [Option | Options]).
-
--spec option_map(binary()) -> {Map :: option(), Rest :: binary()}.
-option_map(<<N:?SHORT, Data/binary>>) ->
-    {Map, Rest} = option_map(N, Data, []),
-    {{map, Map}, Rest}.
-
--spec option_map(integer(), binary(), [{option(), option()}]) ->
-          {Map :: [{option(), option()}], Rest :: binary()}.
-option_map(0, Rest, Options) ->
-    {lists:reverse(Options), Rest};
-option_map(N, Data, Options) ->
-    {OptionKey, Data2} = option(Data),
-    {OptionValue, Rest} = option(Data2),
-    option_map(N - 1, Rest, [{OptionKey, OptionValue} | Options]).
-
--spec option_set(binary()) -> {Set :: option(), Rest :: binary()}.
-option_set(<<N:?SHORT, Data/binary>>) ->
-    {Set, Rest} = option_list(N, Data, []),
-    {{set, Set}, Rest}.
-
--spec other_option(option_id(), binary()) -> {option(), Rest :: binary()}.
-other_option(OptionId, Rest) ->
-    {OptionId, Rest}.
 
 -spec option_id(integer()) -> option_id().
 option_id(16#0000) -> custom;
