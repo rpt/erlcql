@@ -19,7 +19,8 @@
 %% Fixtures -------------------------------------------------------------------
 
 suite() ->
-    [{ct_hooks, [cth_surefire]}, {timetrap, {seconds, 120}}].
+    [{ct_hooks, [cth_surefire]},
+     {timetrap, {seconds, 60}}].
 
 init_per_suite(Config) ->
     {ok, Pid} = erlcql_client:start_link(?HOST, ?OPTS),

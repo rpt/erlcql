@@ -26,15 +26,11 @@
 -export([start_link/0,
          start_link/1,
          start_link/2]).
--export([q/2, query/2,
-         q/3, query/3,
-         e/3, execute/3,
-         e/4, execute/4]).
+-export([q/2, q/3,
+         e/3, e/4]).
+-export([default/1]).
 
 -include("erlcql.hrl").
-
--define(DEFAULT_HOST, "localhost").
--define(DEFAULT_CONSISTENCY, one).
 
 %%-----------------------------------------------------------------------------
 %% API functions
@@ -42,7 +38,7 @@
 
 -spec start_link() -> {ok, pid()} | ignore | {error, Reason :: term()}.
 start_link() ->
-    start_link(?DEFAULT_HOST).
+    erlcql_client:start_link([]).
 
 -spec start_link(string()) -> {ok, pid()} | ignore | {error, Reason :: term()}.
 start_link(Host) ->
@@ -51,42 +47,34 @@ start_link(Host) ->
 -spec start_link(string(), proplists:proplist()) ->
           {ok, pid()} | ignore | {error, Reason :: term()}.
 start_link(Host, Opts) ->
-    erlcql_client:start_link(Host, Opts).
+    Opts2 = [{host, Host} | Opts],
+    erlcql_client:start_link(Opts2).
 
 -spec q(pid(), bitstring()) -> result() | {error, Reason :: term()}.
 q(Pid, Query) ->
-    query(Pid, Query, ?DEFAULT_CONSISTENCY).
-
--spec query(pid(), bitstring()) -> result() | {error, Reason :: term()}.
-query(Pid, Query) ->
-    query(Pid, Query, ?DEFAULT_CONSISTENCY).
+    q(Pid, Query, default(consistency)).
 
 -spec q(pid(), bitstring(), consistency()) ->
           result() | {error, Reason :: term()}.
 q(Pid, Query, Consistency) ->
-    query(Pid, Query, Consistency).
-
--spec query(pid(), bitstring(), consistency()) ->
-          result() | {error, Reason :: term()}.
-query(Pid, Query, Consistency) ->
     erlcql_client:query(Pid, Query, Consistency).
 
 -spec e(pid(), binary(), [binary()]) ->
           result() | {error, Reason :: term()}.
 e(Pid, QueryId, Values) ->
-    execute(Pid, QueryId, Values, ?DEFAULT_CONSISTENCY).
-
--spec execute(pid(), binary(), [binary()]) ->
-          result() | {error, Reason :: term()}.
-execute(Pid, QueryId, Values) ->
-    execute(Pid, QueryId, Values, ?DEFAULT_CONSISTENCY).
+    e(Pid, QueryId, Values, default(consistency)).
 
 -spec e(pid(), binary(), [binary()], consistency()) ->
           result() | {error, Reason :: term()}.
 e(Pid, QueryId, Values, Consistency) ->
-    execute(Pid, QueryId, Values, Consistency).
-
--spec execute(pid(), binary(), [binary()], consistency()) ->
-          result() | {error, Reason :: term()}.
-execute(Pid, QueryId, Values, Consistency) ->
     erlcql_client:execute(Pid, QueryId, Values, Consistency).
+
+-spec default(atom()) -> term().
+default(host) -> "localhost";
+default(port) -> 9042;
+default(compression) -> false;
+default(tracing) -> false;
+default(username) -> <<"cassandra">>;
+default(password) -> <<"cassandra">>;
+default(consistency) -> any;
+default(cql_version) -> <<"3.1.1">>.

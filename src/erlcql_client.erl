@@ -24,7 +24,7 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/2]).
+-export([start_link/1]).
 -export([query/3,
          execute/4]).
 -export([prepare/2,
@@ -65,10 +65,10 @@
 %% API
 %%-----------------------------------------------------------------------------
 
--spec start_link(string(), proplists:proplist()) ->
+-spec start_link(proplists:proplist()) ->
           {ok, pid()} | ignore | {error, Reason :: term()}.
-start_link(Host, Opts) ->
-    gen_fsm:start_link(?MODULE, {Host, proplists:unfold(Opts)}, []).
+start_link(Opts) ->
+    gen_fsm:start_link(?MODULE, proplists:unfold(Opts), []).
 
 -spec query(pid(), bitstring(), consistency()) ->
           result() | {error, Reason :: term()}.
@@ -96,7 +96,8 @@ register(Pid, Events) ->
 %% gen_fsm callbacks
 %%-----------------------------------------------------------------------------
 
-init({Host, Opts}) ->
+init(Opts) ->
+    Host = get_opt(host, Opts),
     Port = get_opt(port, Opts),
     case gen_tcp:connect(Host, Port, ?TCP_OPTS) of
         {ok, Socket} ->
@@ -303,13 +304,5 @@ get_opt(Opt, Opts) ->
         {Opt, Value} ->
             Value;
         false ->
-            application:get_env(?APP, Opt, default(Opt))
+            application:get_env(?APP, Opt, erlcql:default(Opt))
     end.
-
--spec default(atom()) -> term().
-default(port) -> 9042;
-default(compression) ->false;
-default(tracing) -> false;
-default(username) -> <<"cassandra">>;
-default(password) -> <<"cassandra">>;
-default(cql_version) -> <<"3.1.1">>.

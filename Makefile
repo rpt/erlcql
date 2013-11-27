@@ -11,7 +11,7 @@ compile:
 get-deps:
 	@ rebar get-deps
 
-dialyze: $(PLT)
+dialyze: compile $(PLT)
 	@ echo "==> (dialyze)"
 	@ dialyzer --plt $(PLT) ebin -Wunmatched_returns -Wno_undefined_callbacks
 
@@ -25,7 +25,7 @@ $(PLT):
 test: compile
 	@ rebar skip_deps=true ct
 
-console:
+console: compile
 	@ erl -pa ebin deps/*/ebin
 
 clean:
