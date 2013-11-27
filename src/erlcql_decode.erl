@@ -281,7 +281,8 @@ void(<<>>) ->
 rows(Data) ->
     {ColumnCount, ColumnSpecs, RowData} = metadata(Data),
     <<RowCount:?INT, RowContent/binary>> = RowData,
-    Rows = rows(RowCount, ColumnCount, RowContent, []),
+    {_, ColumnTypes} = lists:unzip(ColumnSpecs),
+    Rows = rows(RowCount, ColumnCount, ColumnTypes, RowContent, []),
     {ok, {Rows, ColumnSpecs}}.
 
 -spec metadata(binary()) -> {integer(), column_specs(), Rest :: binary()}.
@@ -380,22 +381,55 @@ option_id(16#0020) -> list;
 option_id(16#0021) -> map;
 option_id(16#0022) -> set.
 
--spec rows(integer(), integer(), binary(), [[binary()]]) ->
+-spec rows(integer(), integer(), [option_id()], binary(), [[binary()]]) ->
           Rows :: [[binary()]].
-rows(0, _N, <<>>, Rows) ->
+rows(0, _N, _Types, <<>>, Rows) ->
     lists:reverse(Rows);
-rows(M, N, Data, Rows) ->
-    {Values, Rest} = row_values(N, Data, []),
-    rows(M - 1, N, Rest, [Values | Rows]).
+rows(M, N, Types, Data, Rows) ->
+    {Values, Rest} = row_values(N, Types, Data, []),
+    rows(M - 1, N, Types, Rest, [Values | Rows]).
 
--spec row_values(integer(), binary(), [binary()]) ->
+-spec row_values(integer(), [option_id()], binary(), [binary()]) ->
           {Values :: [binary()], Rest :: binary()}.
-row_values(0, Rest, Values) ->
+row_values(0, [], Rest, Values) ->
     {lists:reverse(Values), Rest};
-row_values(N, <<-1:?INT, Rest/binary>>, Values) ->
-    row_values(N - 1, Rest, [null | Values]);
-row_values(N, <<Length:?INT, Value:Length/binary, Rest/binary>>, Values) ->
-    row_values(N - 1, Rest, [Value | Values]).
+row_values(N, [_ | Types], <<-1:?INT, Rest/binary>>, Values) ->
+    row_values(N - 1, Types, Rest, [null | Values]);
+row_values(N, [Type | Types], <<Length:?INT, Value:Length/binary,
+                                Rest/binary>>, Values) ->
+    Value2 = convert_value(Type, Value),
+    row_values(N - 1, Types, Rest, [Value2 | Values]).
+
+-spec convert_value(option_id(), binary()) -> integer() | float() |
+                                              boolean() | inet:ip_address() |
+                                              bitstring() | binary().
+convert_value(bigint, <<Int:64>>) ->
+    Int;
+convert_value(boolean, <<Int>>) ->
+    Int == 1;
+convert_value(counter, <<Int:64>>) ->
+    Int;
+convert_value(double, <<Float:64/float>>) ->
+    Float;
+convert_value(float, <<Float:32/float>>) ->
+    Float;
+convert_value(inet, <<A:?BYTE, B:?BYTE, C:?BYTE, D:?BYTE>>) ->
+    {A, B, C, D};
+convert_value(inet, <<A:?BYTE2, B:?BYTE2, C:?BYTE2, D:?BYTE2,
+                      E:?BYTE2, F:?BYTE2, G:?BYTE2, H:?BYTE2>>) ->
+    {A, B, C, D, E, F, G, H};
+convert_value(int, <<Int:32>>) ->
+    Int;
+convert_value(timestamp, <<MilliSecs:64>>) ->
+    MilliSecs;
+convert_value(timeuuid, Value) ->
+    list_to_binary(uuid:to_string(Value));
+convert_value(uuid, Value) ->
+    list_to_binary(uuid:to_string(Value));
+convert_value(varint, Value) ->
+    binary:decode_unsigned(Value);
+convert_value(_Other, Value) ->
+    Value.
 
 %% Result: Set keyspace
 
