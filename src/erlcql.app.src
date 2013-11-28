@@ -7,4 +7,5 @@
   {applications,
    [kernel,
     stdlib,
-    snappy]}]}.
+    snappy,
+    lz4]}]}.

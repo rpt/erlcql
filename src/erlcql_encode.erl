@@ -51,9 +51,9 @@ frame({Opcode, Payload}, {Compression, _}, Stream) ->
 -spec startup(compression(), bitstring()) -> {startup, iolist()}.
 startup(false, CQLVersion) ->
     {startup, string_map([{<<"CQL_VERSION">>, CQLVersion}])};
-startup(snappy, CQLVersion) ->
+startup(Compression, CQLVersion) ->
     {startup, string_map([{<<"CQL_VERSION">>, CQLVersion},
-                          {<<"COMPRESSION">>, <<"snappy">>}])}.
+                          {<<"COMPRESSION">>, compression(Compression)}])}.
 
 %% @doc Encodes the credentials request message body.
 -spec credentials([{K :: bitstring(), V :: bitstring()}]) ->
@@ -171,4 +171,13 @@ maybe_compress(false, Payload) ->
     {0, Payload};
 maybe_compress(snappy, Payload) ->
     {ok, CompressedPayload} = snappy:compress(Payload),
-    {1, CompressedPayload}.
+    {1, CompressedPayload};
+maybe_compress(lz4, Payload) ->
+    PayloadBinary = iolist_to_binary(Payload),
+    Size = byte_size(PayloadBinary),
+    {ok, CompressedPayload} = lz4:compress(PayloadBinary),
+    {1, <<Size:32, CompressedPayload/binary>>}.
+
+-spec compression(compression()) -> bitstring().
+compression(snappy) -> <<"snappy">>;
+compression(lz4) -> <<"lz4">>.

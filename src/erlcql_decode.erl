@@ -110,7 +110,10 @@ maybe_decompress(0, _Compression, Data) ->
     Data;
 maybe_decompress(1, snappy, Data) ->
     {ok, DecompressedData} = snappy:decompress(Data),
-    DecompressedData.
+    DecompressedData;
+maybe_decompress(1, lz4, <<Size:32, Data/binary>>) ->
+    {ok, UnpackedData} = lz4:uncompress(Data, Size),
+    UnpackedData.
 
 -spec opcode(integer()) -> response_opcode().
 opcode(16#00) -> error;

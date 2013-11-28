@@ -145,6 +145,7 @@
                 | {custom, bitstring()}.
 
 -type compression() :: snappy
+                     | lz4
                      | false.
 
 -type column_specs() :: [{Name :: bitstring(), Type :: option()}].

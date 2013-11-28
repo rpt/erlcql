@@ -13,14 +13,14 @@ erlcql:start_link(Options :: proplists:proplist()) ->
 
 #### Options
 
-| Option      | Type                    | Default           |
-|:----------- |:----------------------- |:----------------- |
-| host        | string()                | `"localhost"`     |
-| port        | integer()               | `9042`            |
-| compression | false &#124; snappy     | `false`           |
-| tracing     | boolean()               | `false`           |
-| username    | bitstring()             | `<<"cassandra">>` |
-| password    | bitstring()             | `<<"cassandra">>` |
+| Option      | Type                              | Default           |
+|:----------- |:--------------------------------- |:----------------- |
+| host        | string()                          | `"localhost"`     |
+| port        | integer()                         | `9042`            |
+| compression | false &#124; snappy &#124; lz4    | `false`           |
+| tracing     | boolean()                         | `false`           |
+| username    | bitstring()                       | `<<"cassandra">>` |
+| password    | bitstring()                       | `<<"cassandra">>` |
 
 ### Query
 
