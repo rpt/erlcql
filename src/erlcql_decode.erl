@@ -287,22 +287,28 @@ rows(Data) ->
 
 -spec metadata(binary()) -> {integer(), column_specs(), Rest :: binary()}.
 metadata(<<_:31, 0:1, ColumnCount:?INT, ColumnData/binary>>) ->
-    {ColumnSpecs, Rest} = column_specs(ColumnCount, ColumnData, []),
+    {ColumnSpecs, Rest} = column_specs(false, ColumnCount, ColumnData, []),
     {ColumnCount, ColumnSpecs, Rest};
 metadata(<<_:31, 1:1, ColumnCount:?INT,
            Length:?SHORT, _Keyspace:?STRING(Length),
            Length2:?SHORT, _Table:?STRING(Length2), ColumnData/binary>>) ->
-    {ColumnSpecs, Rest} = column_specs(ColumnCount, ColumnData, []),
+    {ColumnSpecs, Rest} = column_specs(true, ColumnCount, ColumnData, []),
     {ColumnCount, ColumnSpecs, Rest}.
 
--spec column_specs(integer(), binary(), column_specs()) ->
+-spec column_specs(boolean(), integer(), binary(), column_specs()) ->
           {column_specs(), Rest :: binary()}.
-column_specs(0, Rest, ColumnSpecs) ->
+column_specs(_Global, 0, Rest, ColumnSpecs) ->
     {lists:reverse(ColumnSpecs), Rest};
-column_specs(N, <<Length:?SHORT, Name:Length/binary, TypeData/binary>>,
+column_specs(true, N, <<Length:?SHORT, Name:?STRING(Length), TypeData/binary>>,
              ColumnSpecs) ->
     {Type, Rest} = option(TypeData),
-    column_specs(N - 1, Rest, [{Name, Type} | ColumnSpecs]).
+    column_specs(true, N - 1, Rest, [{Name, Type} | ColumnSpecs]);
+column_specs(false, N, <<Length:?SHORT, _Keyspace:?STRING(Length),
+                         Length2:?SHORT, _Table:?STRING(Length2),
+                         Length3:?SHORT, Name:?STRING(Length3), TypeData/binary>>,
+             ColumnSpecs) ->
+    {Type, Rest} = option(TypeData),
+    column_specs(false, N - 1, Rest, [{Name, Type} | ColumnSpecs]).
 
 -spec option(binary()) -> {option(), Rest :: binary()}.
 option(<<Id:?SHORT, Data/binary>>) ->
