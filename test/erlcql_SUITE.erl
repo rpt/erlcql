@@ -5,21 +5,6 @@
 -include_lib("common_test/include/ct.hrl").
 
 -define(KEYSPACE, <<"erlcql_tests">>).
--define(TYPES, [ascii,
-                bigint,
-                blob,
-                boolean,
-                counter,
-                double,
-                float,
-                inet,
-                int ,
-                text,
-                timestamp,
-                timeuuid,
-                uuid,
-                varchar,
-                varint]).
 
 -define(CREATE_KEYSPACE,
         [<<"CREATE KEYSPACE erlcql_tests WITH replication = ",
@@ -45,60 +30,83 @@ init_per_suite(Config) ->
 
 end_per_suite(Config) ->
     Pid = get_pid(Config),
+    q(Pid, ?DROP_KEYSPACE),
     exit(Pid, kill).
 
-init_per_group(type_tests, Config) ->
+init_per_group(types, Config) ->
     Pid = get_pid(Config),
     q(Pid, ?CREATE_KEYSPACE),
     Config;
-init_per_group(data_tests, Config) ->
+init_per_group(data_manipulation, Config) ->
     Pid = get_pid(Config),
     q(Pid, ?CREATE_KEYSPACE),
-    {ok, ?KEYSPACE} = q(Pid, ?USE_KEYSPACE),
+    q(Pid, ?USE_KEYSPACE),
     q(Pid, ?CREATE_TABLE),
     Config;
 init_per_group(_GroupName, Config) ->
     Config.
 
-end_per_group(type_tests, Config) ->
+end_per_group(types, Config) ->
     Pid = get_pid(Config),
     q(Pid, ?DROP_KEYSPACE);
-end_per_group(data_tests, Config) ->
+end_per_group(data_manipulation, Config) ->
     Pid = get_pid(Config),
     q(Pid, ?DROP_KEYSPACE);
 end_per_group(_GroupName, _Config) ->
     ok.
 
+init_per_testcase(create_keyspace, Config) ->
+    Pid = get_pid(Config),
+    q(Pid, ?DROP_KEYSPACE),
+    Config;
 init_per_testcase(drop_keyspace, Config) ->
     Pid = get_pid(Config),
     q(Pid, ?CREATE_KEYSPACE),
     Config;
-init_per_testcase(_TestCase, Config) ->
+init_per_testcase(TestCase, Config) ->
+    clean_type_table(TestCase, Config),
     Config.
 
 end_per_testcase(create_keyspace, Config) ->
     Pid = get_pid(Config),
     q(Pid, ?DROP_KEYSPACE);
 end_per_testcase(TestCase, Config) ->
-    Pid = get_pid(Config),
-    q(Pid, <<"DROP TABLE erlcql_tests.t">>).
+    clean_type_table(TestCase, Config),
+    ok.
 
 groups() ->
-    [{keyspace_tests, [],
-      [
-       create_keyspace,
-       drop_keyspace
-      ]},
-     {type_tests, [], ?TYPES},
-     {data_tests, [],
-      [
-       insert
-      ]}].
+    [{keyspaces, [],
+      [create_keyspace,
+       drop_keyspace]},
+     {types, [],
+      [{native, [],
+        [ascii,
+         bigint,
+         blob,
+         boolean,
+         counter,
+         double,
+         float,
+         inet,
+         int,
+         text,
+         timestamp,
+         timeuuid,
+         uuid,
+         varchar,
+         varint]},
+       {collections, [],
+        [list_of_ints,
+         list_of_varints,
+         set_of_floats,
+         map_of_strings_to_stings]}]},
+     {data_manipulation, [],
+      [insert]}].
 
 all() ->
-    [{group, keyspace_tests},
-     {group, type_tests},
-     {group, data_tests}].
+    [{group, keyspaces},
+     {group, types},
+     {group, data_manipulation}].
 
 %% Tests ----------------------------------------------------------------------
 
@@ -134,11 +142,11 @@ blob(Config) ->
 
 counter(Config) ->
     Pid = get_pid(Config),
-    create_table_with_type(Pid, counter),
+    create_type_table(Pid, counter),
     q(Pid, <<"UPDATE erlcql_tests.t SET v = v + 1 WHERE k = 'key'">>, one),
     q(Pid, <<"UPDATE erlcql_tests.t SET v = v + 2 WHERE k = 'key'">>, one),
     q(Pid, <<"UPDATE erlcql_tests.t SET v = v + 3 WHERE k = 'key'">>, one),
-    6 = get_type(Pid).
+    6 = get_value(Pid, counter).
 
 double(Config) ->
     Pid = get_pid(Config),
@@ -182,6 +190,24 @@ varint(Config) ->
     Pid = get_pid(Config),
     check_type(Pid, varint, <<"32800">>, 32800).
 
+list_of_ints(Config) ->
+    Pid = get_pid(Config),
+    check_type(Pid, <<"list<int>">>, <<"[1, 2, 3]">>, [1, 2, 3]).
+
+list_of_varints(Config) ->
+    Pid = get_pid(Config),
+    check_type(Pid, <<"list<varint>">>, <<"[1, 2, 3]">>, [1, 2, 3]).
+
+set_of_floats(Config) ->
+    Pid = get_pid(Config),
+    check_type(Pid, <<"set<double>">>, <<"{0.1, 1.2, 2.3}">>, [0.1, 1.2, 2.3]).
+
+map_of_strings_to_stings(Config) ->
+    Pid = get_pid(Config),
+    check_type(Pid, <<"map<varchar, boolean>">>,
+               <<"{'Poland': true, 'USA': false}">>,
+               [{<<"Poland">>, true}, {<<"USA">>, false}]).
+
 %% Data tests
 
 insert(Config) ->
@@ -201,20 +227,45 @@ get_keyspaces(Pid) ->
     Keyspaces.
 
 check_type(Pid, Type, Value, Expected) ->
-    create_table_with_type(Pid, Type),
+    create_type_table(Pid, Type),
     insert_type(Pid, Value),
-    Expected = get_type(Pid).
+    Expected = get_value(Pid, Type).
 
-create_table_with_type(Pid, Type) ->
+create_type_table(Pid, Type) when is_atom(Type) ->
     TypeBin = atom_to_binary(Type, utf8),
+    create_type_table(Pid, TypeBin);
+create_type_table(Pid, Type) ->
     {ok, created} = q(Pid, [<<"CREATE TABLE erlcql_tests.t ",
-                              "(k varchar PRIMARY KEY, v ">>,
-                            TypeBin, <<")">>]).
+                              "(k varchar PRIMARY KEY, v ">>, Type, <<")">>]).
 
 insert_type(Pid, Value) ->
     {ok, void} = q(Pid, [<<"INSERT INTO erlcql_tests.t ",
                            "(k, v) VALUES ('key', ">>, Value, <<")">>]).
 
-get_type(Pid) ->
-    {ok, {[[Type]], _}} = q(Pid, <<"SELECT v FROM erlcql_tests.t">>, one),
-    Type.
+get_value(Pid, text) ->
+    get_value(Pid, varchar);
+get_value(Pid, <<"list<int>">>) ->
+    get_value(Pid, {list, int});
+get_value(Pid, <<"list<varint>">>) ->
+    get_value(Pid, {list, varint});
+get_value(Pid, <<"set<double>">>) ->
+    get_value(Pid, {set, double});
+get_value(Pid, <<"map<varchar, boolean>">>) ->
+    get_value(Pid, {map, varchar, boolean});
+get_value(Pid, Type) ->
+    Res = q(Pid, <<"SELECT v FROM erlcql_tests.t">>, one),
+    {ok, {[[Value]], [{<<"v">>, Type}]}} = Res,
+    Value.
+
+clean_type_table(TestCase, Config) ->
+    {_, [], Tests} = lists:keyfind(types, 1, groups()),
+    {_, [], Native} = lists:keyfind(native, 1, Tests),
+    {_, [], Collections} = lists:keyfind(collections, 1, Tests),
+    Types = Native ++ Collections,
+    case lists:member(TestCase, Types) of
+        true ->
+            Pid = get_pid(Config),
+            q(Pid, <<"DROP TABLE erlcql_tests.t">>);
+        false ->
+            ok
+    end.

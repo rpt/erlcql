@@ -310,15 +310,15 @@ option(<<Id:?SHORT, Data/binary>>) ->
         custom ->
             custom_option(Data);
         list ->
-            {Option, Rest} = option(Data),
-            {{list, Option}, Rest};
+            {Type, Rest} = option(Data),
+            {{list, Type}, Rest};
         map ->
-            {Key, Rest} = option(Data),
-            {Value, Rest2} = option(Rest),
-            {{map, Key, Value}, Rest2};
+            {KeyType, Rest} = option(Data),
+            {ValueType, Rest2} = option(Rest),
+            {{map, KeyType, ValueType}, Rest2};
         set ->
-            {Option, Rest} = option(Data),
-            {{set, Option}, Rest};
+            {Type, Rest} = option(Data),
+            {{set, Type}, Rest};
         OptionId ->
             {OptionId, Data}
     end.
@@ -368,15 +368,13 @@ row_values(N, [Type | Types], <<Length:?INT, Value:Length/binary,
     Value2 = convert_value(Type, Value),
     row_values(N - 1, Types, Rest, [Value2 | Values]).
 
--spec convert_value(option_id(), binary()) -> integer() | float() |
-                                              boolean() | inet:ip_address() |
-                                              bitstring() | binary().
+-spec convert_value(option_id(), binary()) -> term().
 convert_value(bigint, <<Int:64>>) ->
     Int;
-convert_value(boolean, <<Int>>) ->
+convert_value(boolean, <<Int:8>>) ->
     Int == 1;
-convert_value(counter, <<Int:64>>) ->
-    Int;
+convert_value(counter, Value) ->
+    convert_value(bigint, Value);
 convert_value(double, <<Float:64/float>>) ->
     Float;
 convert_value(float, <<Float:32/float>>) ->
@@ -388,16 +386,41 @@ convert_value(inet, <<A:?BYTE2, B:?BYTE2, C:?BYTE2, D:?BYTE2,
     {A, B, C, D, E, F, G, H};
 convert_value(int, <<Int:32>>) ->
     Int;
-convert_value(timestamp, <<MilliSecs:64>>) ->
-    MilliSecs;
+convert_value(timestamp, Value) ->
+    convert_value(bigint, Value);
 convert_value(timeuuid, Value) ->
-    list_to_binary(uuid:to_string(Value));
-convert_value(uuid, Value) ->
-    list_to_binary(uuid:to_string(Value));
+    convert_value(uuid, Value);
+convert_value(uuid, <<_:128>> = Uuid) ->
+    list_to_binary(uuid:to_string(Uuid));
 convert_value(varint, Value) ->
     binary:decode_unsigned(Value);
+convert_value({list, Type}, <<N:?SHORT, Data/binary>>) ->
+    convert_list(N, Type, Data, []);
+convert_value({set, Type}, Value) ->
+    convert_value({list, Type}, Value);
+convert_value({map, KeyType, ValueType}, <<N:?SHORT, Data/binary>>) ->
+    convert_map(N, {KeyType, ValueType}, Data, []);
 convert_value(_Other, Value) ->
     Value.
+
+-spec convert_list(integer(), option_id(), binary(), [term()]) -> [term()].
+convert_list(0, _Type, <<>>, Values) ->
+    lists:reverse(Values);
+convert_list(N, Type, <<Size:?SHORT, Value:Size/binary,
+                        Rest/binary>>, Values) ->
+    Value2 = convert_value(Type, Value),
+    convert_list(N - 1, Type, Rest, [Value2 | Values]).
+
+-spec convert_map(integer(), {option_id(), option_id()}, binary(),
+                  [{term(), term()}]) -> [{term(), term()}].
+convert_map(0, _Types, <<>>, Values) ->
+    lists:reverse(Values);
+convert_map(N, {KeyType, ValueType} = Types,
+            <<KeySize:?SHORT, Key:KeySize/binary, ValueSize:?SHORT,
+              Value:ValueSize/binary, Rest/binary>>, Values) ->
+    Key2 = convert_value(KeyType, Key),
+    Value2 = convert_value(ValueType, Value),
+    convert_map(N - 1, Types, Rest, [{Key2, Value2} | Values]).
 
 %% Result: Set keyspace
 
