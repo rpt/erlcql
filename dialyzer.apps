@@ -1,0 +1,5 @@
+erts
+kernel
+stdlib
+deps/snappy/ebin
+deps/uuid/ebin

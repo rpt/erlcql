@@ -349,7 +349,7 @@ option_id(16#0020) -> list;
 option_id(16#0021) -> map;
 option_id(16#0022) -> set.
 
--spec rows(integer(), integer(), [option_id()], binary(), [[binary()]]) ->
+-spec rows(integer(), integer(), [option()], binary(), [[binary()]]) ->
           Rows :: [[binary()]].
 rows(0, _N, _Types, <<>>, Rows) ->
     lists:reverse(Rows);
@@ -357,7 +357,7 @@ rows(M, N, Types, Data, Rows) ->
     {Values, Rest} = row_values(N, Types, Data, []),
     rows(M - 1, N, Types, Rest, [Values | Rows]).
 
--spec row_values(integer(), [option_id()], binary(), [binary()]) ->
+-spec row_values(integer(), [option()], binary(), [binary()]) ->
           {Values :: [binary()], Rest :: binary()}.
 row_values(0, [], Rest, Values) ->
     {lists:reverse(Values), Rest};
@@ -368,7 +368,7 @@ row_values(N, [Type | Types], <<Length:?INT, Value:Length/binary,
     Value2 = convert_value(Type, Value),
     row_values(N - 1, Types, Rest, [Value2 | Values]).
 
--spec convert_value(option_id(), binary()) -> term().
+-spec convert_value(option(), binary()) -> term().
 convert_value(bigint, <<Int:64/signed>>) ->
     Int;
 convert_value(boolean, <<_:7, Int:1>>) ->

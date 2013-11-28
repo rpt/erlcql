@@ -139,9 +139,9 @@
                    | set.
 
 -type option() :: option_id()
-                | {list, [option()]}
-                | {map, [{option(), option()}]}
-                | {set, [option()]}
+                | {list, option_id()}
+                | {map, option_id(), option_id()}
+                | {set, option_id()}
                 | {custom, bitstring()}.
 
 -type compression() :: snappy
