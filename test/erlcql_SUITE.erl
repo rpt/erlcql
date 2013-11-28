@@ -6,13 +6,14 @@
 
 -define(KEYSPACE, <<"erlcql_tests">>).
 
--define(CREATE_KEYSPACE,
-        [<<"CREATE KEYSPACE erlcql_tests WITH replication = ",
-           "{'class': 'SimpleStrategy', 'replication_factor': 1}">>]).
--define(DROP_KEYSPACE, <<"DROP KEYSPACE erlcql_tests">>).
+-define(CREATE_KEYSPACE, <<"CREATE KEYSPACE IF NOT EXISTS erlcql_tests ",
+                           "WITH replication = {'class': 'SimpleStrategy', ",
+                           "'replication_factor': 1}">>).
+-define(DROP_KEYSPACE, <<"DROP KEYSPACE IF EXISTS erlcql_tests">>).
 -define(USE_KEYSPACE, <<"USE erlcql_tests">>).
--define(CREATE_TABLE, <<"CREATE TABLE t (k int PRIMARY KEY, v text)">>).
--define(DROP_TABLE, <<"DROP TABLE t">>).
+-define(CREATE_TABLE, <<"CREATE TABLE IF NOT EXISTS t ",
+                        "(k int PRIMARY KEY, v text)">>).
+-define(DROP_TABLE, <<"DROP TABLE IF EXISTS t">>).
 
 -import(erlcql, [q/2, q/3]).
 
@@ -85,6 +86,7 @@ groups() ->
          blob,
          boolean,
          counter,
+         decimal,
          double,
          float,
          inet,
@@ -147,6 +149,10 @@ counter(Config) ->
     q(Pid, <<"UPDATE erlcql_tests.t SET v = v + 2 WHERE k = 'key'">>, one),
     q(Pid, <<"UPDATE erlcql_tests.t SET v = v + 3 WHERE k = 'key'">>, one),
     6 = get_value(Pid, counter).
+
+decimal(Config) ->
+    Pid = get_pid(Config),
+    check_type(Pid, decimal, <<"1234.5678">>, 1234.5678).
 
 double(Config) ->
     Pid = get_pid(Config),
@@ -235,7 +241,7 @@ create_type_table(Pid, Type) when is_atom(Type) ->
     TypeBin = atom_to_binary(Type, utf8),
     create_type_table(Pid, TypeBin);
 create_type_table(Pid, Type) ->
-    {ok, created} = q(Pid, [<<"CREATE TABLE erlcql_tests.t ",
+    {ok, created} = q(Pid, [<<"CREATE TABLE IF NOT EXISTS erlcql_tests.t ",
                               "(k varchar PRIMARY KEY, v ">>, Type, <<")">>]).
 
 insert_type(Pid, Value) ->
@@ -265,7 +271,7 @@ clean_type_table(TestCase, Config) ->
     case lists:member(TestCase, Types) of
         true ->
             Pid = get_pid(Config),
-            q(Pid, <<"DROP TABLE erlcql_tests.t">>);
+            q(Pid, <<"DROP TABLE IF EXISTS erlcql_tests.t">>);
         false ->
             ok
     end.

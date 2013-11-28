@@ -369,12 +369,16 @@ row_values(N, [Type | Types], <<Length:?INT, Value:Length/binary,
     row_values(N - 1, Types, Rest, [Value2 | Values]).
 
 -spec convert_value(option_id(), binary()) -> term().
-convert_value(bigint, <<Int:64>>) ->
+convert_value(bigint, <<Int:64/signed>>) ->
     Int;
-convert_value(boolean, <<Int:8>>) ->
+convert_value(boolean, <<_:7, Int:1>>) ->
     Int == 1;
 convert_value(counter, Value) ->
     convert_value(bigint, Value);
+convert_value(decimal, <<Scale:32, Binary/binary>>) ->
+    Size = byte_size(Binary) * 8,
+    <<Value:Size/signed>> = Binary,
+    Value * math:pow(10, -Scale);
 convert_value(double, <<Float:64/float>>) ->
     Float;
 convert_value(float, <<Float:32/float>>) ->
@@ -384,7 +388,7 @@ convert_value(inet, <<A:?BYTE, B:?BYTE, C:?BYTE, D:?BYTE>>) ->
 convert_value(inet, <<A:?BYTE2, B:?BYTE2, C:?BYTE2, D:?BYTE2,
                       E:?BYTE2, F:?BYTE2, G:?BYTE2, H:?BYTE2>>) ->
     {A, B, C, D, E, F, G, H};
-convert_value(int, <<Int:32>>) ->
+convert_value(int, <<Int:32/signed>>) ->
     Int;
 convert_value(timestamp, Value) ->
     convert_value(bigint, Value);
