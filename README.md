@@ -26,26 +26,26 @@ erlcql:start_link(Options :: proplists:proplist()) ->
 
 #### Types
 
-| Cassandra type  | Erlang type                 |
-|:--------------- |:--------------------------- |
-| ascii           | bitstring()                 |
-| bigint          | integer()                   |
-| blob            | binary()                    |
-| boolean         | boolean()                   |
-| counter         | integer()                   |
-| decimal         | float()                     |
-| double          | float()                     |
-| float           | float()                     |
-| inet            | inet:ip_address()           |
-| int             | integer()                   |
-| timestamp       | integer()                   |
-| timeuuid        | uuid:uuid()                 |
-| uuid            | uuid:uuid()                 |
-| varchar/text    | bitstring()                 |
-| varint          | integer()                   |
-| list<type>      | list(type())                |
-| set<type>       | list(type())                |
-| map<key, value> | list(tuple(key(), value())) |
+| Cassandra type        | Erlang type                 |
+|:--------------------- |:--------------------------- |
+| ascii                 | bitstring()                 |
+| bigint                | integer()                   |
+| blob                  | binary()                    |
+| boolean               | boolean()                   |
+| counter               | integer()                   |
+| decimal               | float()                     |
+| double                | float()                     |
+| float                 | float()                     |
+| inet                  | inet:ip_address()           |
+| int                   | integer()                   |
+| timestamp             | integer()                   |
+| timeuuid              | uuid:uuid()                 |
+| uuid                  | uuid:uuid()                 |
+| varchar/text          | bitstring()                 |
+| varint                | integer()                   |
+| list&lt;type&gt;      | list(type())                |
+| set&lt;type&gt;       | list(type())                |
+| map&lt;key, value&gt; | list(tuple(key(), value())) |
 
 ## Notes
 
