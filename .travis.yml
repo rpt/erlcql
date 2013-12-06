@@ -1,6 +1,8 @@
 language: erlang
 otp_release:
-   - R16B
+  - R16B
+  - R16B01
+  - R16B02
+services: cassandra
+before_script: sleep 10
 script: make test
-services:
-   - cassandra
