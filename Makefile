@@ -1,7 +1,8 @@
-.PHONY: all compile get-deps dialyze test console clean
+.PHONY: all compile get-deps dialyze wait test console clean
 
 APPS = dialyzer.apps
 PLT = apps.plt
+TIMEOUT = 15
 
 all: get-deps compile
 
@@ -24,7 +25,10 @@ $(PLT): dialyzer.apps
 	   --apps $(shell cat $(APPS))
 	@ echo " done"
 
-test: compile
+wait:
+	@ ./wait $(TIMEOUT) || (echo "Cassandra down"; exit 1)
+
+test: compile wait
 	@ rebar skip_deps=true ct
 
 console: compile
