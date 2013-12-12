@@ -72,7 +72,7 @@ start_link(Opts) ->
     Opts2 = [{parent, self()} | Opts],
     case gen_fsm:start_link(?MODULE, proplists:unfold(Opts2), []) of
         {ok, Pid} ->
-            wait_until_ready(Pid);
+            wait_until_ready(Pid, Opts);
         {error, _Reason} = Error ->
             Error
     end.
@@ -104,20 +104,20 @@ register(Pid, Events) ->
 %%-----------------------------------------------------------------------------
 
 init(Opts) ->
-    Host = get_opt(host, Opts),
-    Port = get_opt(port, Opts),
+    Host = get_env_opt(host, Opts),
+    Port = get_env_opt(port, Opts),
     case gen_tcp:connect(Host, Port, ?TCP_OPTS) of
         {ok, Socket} ->
             AsyncETS = ets:new(?ETS_NAME, ?ETS_OPTS),
-            Compression = get_opt(compression, Opts),
-            Tracing = get_opt(tracing, Opts),
+            Compression = get_env_opt(compression, Opts),
+            Tracing = get_env_opt(tracing, Opts),
             Flags = {Compression, Tracing},
-            CQLVersion = get_opt(cql_version, Opts),
-            Username = get_opt(username, Opts),
-            Password = get_opt(password, Opts),
+            CQLVersion = get_env_opt(cql_version, Opts),
+            Username = get_env_opt(username, Opts),
+            Password = get_env_opt(password, Opts),
             Credentials = {Username, Password},
             Parser = erlcql_decode:new_parser(),
-            {parent, Parent} = lists:keyfind(parent, 1, Opts),
+            Parent = get_opt(parent, Opts),
 
             Startup = erlcql_encode:startup(Compression, CQLVersion),
             Frame = erlcql_encode:frame(Startup, {false, Tracing}, 0),
@@ -216,14 +216,28 @@ terminate(_Reason, _StateName, _State) ->
 %% Internal functions
 %%-----------------------------------------------------------------------------
 
--spec wait_until_ready(pid()) -> {ok, pid()} | {error, timeout}.
-wait_until_ready(Pid) ->
+-spec wait_until_ready(pid(), proplists:proplist()) ->
+          {ok, pid()} | {error, timeout | bad_keyspace}.
+wait_until_ready(Pid, Opts) ->
     receive
         ready ->
-            {ok, Pid}
+            Keyspace = get_env_opt(use, Opts),
+            wait_for_use(Keyspace, Pid)
     after
         ?TIMEOUT ->
             {error, timeout}
+    end.
+
+-spec wait_for_use(pid(), proplists:proplist()) ->
+          {ok, pid()} | {error, bad_keyspace}.
+wait_for_use(undefined, Pid) ->
+    {ok, Pid};
+wait_for_use(Keyspace, Pid) ->
+    case ?MODULE:register(Pid, Keyspace) of
+        ready ->
+            {ok, Pid};
+        {error, _Reason} ->
+            {error, bad_keyspace}
     end.
 
 -spec async_call(pid(), tuple() | atom()) -> response() |
@@ -325,13 +339,22 @@ handle_response({Stream, Response}, #state{async_ets = AsyncETS,
 %% Helper functions
 %%-----------------------------------------------------------------------------
 
+-spec get_env_opt(atom(), proplists:proplist()) -> Value :: term().
+get_env_opt(Opt, Opts) ->
+    case lists:keyfind(Opt, 1, Opts) of
+        {Opt, Value} ->
+            Value;
+        false ->
+            get_env(Opt)
+    end.
+
 -spec get_opt(atom(), proplists:proplist()) -> Value :: term().
 get_opt(Opt, Opts) ->
     case lists:keyfind(Opt, 1, Opts) of
         {Opt, Value} ->
             Value;
         false ->
-            get_env(Opt)
+            undefined
     end.
 
 -spec get_env(atom()) -> Value :: term().

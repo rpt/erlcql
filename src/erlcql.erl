@@ -33,7 +33,8 @@
 -include("erlcql.hrl").
 
 -export_types([reponse/0,
-               consistency/0]).
+               consistency/0,
+               compression/0]).
 
 %%-----------------------------------------------------------------------------
 %% API functions
@@ -75,9 +76,10 @@ e(Pid, QueryId, Values, Consistency) ->
 -spec default(atom()) -> term().
 default(host) -> "localhost";
 default(port) -> 9042;
-default(compression) -> false;
-default(tracing) -> false;
 default(username) -> <<"cassandra">>;
 default(password) -> <<"cassandra">>;
-default(consistency) -> any;
-default(cql_version) -> <<"3.1.1">>.
+default(cql_version) -> <<"3.1.1">>;
+default(compression) -> false;
+default(tracing) -> false;
+default(use) -> undefined;
+default(consistency) -> any.

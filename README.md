@@ -13,14 +13,15 @@ erlcql:start_link(Options :: proplists:proplist()) ->
 
 #### Options
 
-| Option      | Type                              | Default           |
-|:----------- |:--------------------------------- |:----------------- |
-| host        | string()                          | `"localhost"`     |
-| port        | integer()                         | `9042`            |
-| compression | false &#124; snappy &#124; lz4    | `false`           |
-| tracing     | boolean()                         | `false`           |
-| username    | bitstring()                       | `<<"cassandra">>` |
-| password    | bitstring()                       | `<<"cassandra">>` |
+| Option      | Type                 | Default           |
+|:----------- |:-------------------- |:----------------- |
+| host        | string()             | `"localhost"`     |
+| port        | integer()            | `9042`            |
+| username    | bitstring()          | `<<"cassandra">>` |
+| password    | bitstring()          | `<<"cassandra">>` |
+| cql_version | bitstring()          | `<<"3.1.1">>`     |
+| compression | erlcql:compression() | `false`           |
+| use         | bitstring()          |                   |
 
 ### Query
 
@@ -46,6 +47,7 @@ erlcql:start_link(Options :: proplists:proplist()) ->
 | list&lt;type&gt;      | list(type())                |
 | set&lt;type&gt;       | list(type())                |
 | map&lt;key, value&gt; | list(tuple(key(), value())) |
+| custom                | binary()                    |
 
 ## Notes
 
