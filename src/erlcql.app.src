@@ -3,7 +3,7 @@
 
 {application, erlcql,
  [{description, "Cassandra native protocol CQL client"},
-  {vsn, "0.1.1"},
+  {vsn, "0.1.2"},
   {applications,
    [kernel,
     stdlib,
