@@ -304,5 +304,14 @@ get_opt(Opt, Opts) ->
         {Opt, Value} ->
             Value;
         false ->
-            application:get_env(?APP, Opt, erlcql:default(Opt))
+            get_env(Opt)
+    end.
+
+-spec get_env(atom()) -> Value :: term().
+get_env(Opt) ->
+    case application:get_env(?APP, Opt) of
+        {ok, Val} ->
+            Val;
+        undefined ->
+            erlcql:default(Opt)
     end.
