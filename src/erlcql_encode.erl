@@ -27,7 +27,7 @@
 -export([startup/2,
          credentials/1,
          options/0,
-         query/2,
+         'query'/2,
          prepare/1,
          execute/3,
          register/1]).
@@ -66,10 +66,10 @@ credentials(Informations) ->
 options() ->
     {options, []}.
 
-%% @doc Encodes the query request message body.
--spec query(iolist(), consistency()) -> {query, iolist()}.
-query(QueryString, Consistency) ->
-    {query, [long_string(QueryString), consistency(Consistency)]}.
+%% @doc Encodes the 'query' request message body.
+-spec 'query'(iolist(), consistency()) -> {'query', iolist()}.
+'query'(QueryString, Consistency) ->
+    {'query', [long_string(QueryString), consistency(Consistency)]}.
 
 %% @doc Encodes the prepare request message body.
 -spec prepare(iolist()) -> {prepare, iolist()}.
@@ -136,7 +136,7 @@ bytes_list(BytesList) ->
 opcode(startup) -> 1;
 opcode(credentials) -> 4;
 opcode(options) -> 5;
-opcode(query) -> 7;
+opcode('query') -> 7;
 opcode(prepare) -> 9;
 opcode(execute) -> 10;
 opcode(register) -> 11.

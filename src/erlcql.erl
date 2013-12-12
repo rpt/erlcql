@@ -60,7 +60,7 @@ q(Pid, Query) ->
 -spec q(pid(), bitstring(), consistency()) ->
           result() | {error, Reason :: term()}.
 q(Pid, Query, Consistency) ->
-    erlcql_client:query(Pid, Query, Consistency).
+    erlcql_client:'query'(Pid, Query, Consistency).
 
 -spec e(pid(), binary(), [binary()]) ->
           result() | {error, Reason :: term()}.

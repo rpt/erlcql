@@ -44,7 +44,7 @@
 -type request() :: {Opcode :: request_opcode(), Data :: iolist()}.
 -type request_opcode() :: startup
                         | credentials
-                        | query
+                        | 'query'
                         | prepare
                         | execute
                         | options
