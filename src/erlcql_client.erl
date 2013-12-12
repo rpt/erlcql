@@ -46,6 +46,7 @@
 -include("erlcql.hrl").
 
 -record(state, {
+          parent :: pid(),
           socket :: port(),
           async_ets :: integer(),
           credentials :: {bitstring(), bitstring()},
@@ -68,7 +69,13 @@
 -spec start_link(proplists:proplist()) ->
           {ok, pid()} | ignore | {error, Reason :: term()}.
 start_link(Opts) ->
-    gen_fsm:start_link(?MODULE, proplists:unfold(Opts), []).
+    Opts2 = [{parent, self()} | Opts],
+    case gen_fsm:start_link(?MODULE, proplists:unfold(Opts2), []) of
+        {ok, Pid} ->
+            wait_until_ready(Pid);
+        {error, _Reason} = Error ->
+            Error
+    end.
 
 -spec 'query'(pid(), bitstring(), consistency()) ->
           result() | {error, Reason :: term()}.
@@ -110,12 +117,14 @@ init(Opts) ->
             Password = get_opt(password, Opts),
             Credentials = {Username, Password},
             Parser = erlcql_decode:new_parser(),
+            {parent, Parent} = lists:keyfind(parent, 1, Opts),
 
             Startup = erlcql_encode:startup(Compression, CQLVersion),
             Frame = erlcql_encode:frame(Startup, {false, Tracing}, 0),
             ok = gen_tcp:send(Socket, Frame),
 
-            {ok, startup, #state{socket = Socket,
+            {ok, startup, #state{parent = Parent,
+                                 socket = Socket,
                                  flags = Flags,
                                  credentials = Credentials,
                                  async_ets = AsyncETS,
@@ -130,6 +139,9 @@ handle_event({timeout, Stream}, StateName,
                     streams = Streams} = State) ->
     true = ets:delete(AsyncETS, Stream),
     {next_state, StateName, State#state{streams = [Stream | Streams]}};
+handle_event(ready, ready, #state{parent = Parent} = State) ->
+    Parent ! ready,
+    {next_state, ready, State};
 handle_event(Event, _StateName, State) ->
     {stop, {bad_event, Event}, State}.
 
@@ -204,6 +216,16 @@ terminate(_Reason, _StateName, _State) ->
 %% Internal functions
 %%-----------------------------------------------------------------------------
 
+-spec wait_until_ready(pid()) -> {ok, pid()} | {error, timeout}.
+wait_until_ready(Pid) ->
+    receive
+        ready ->
+            {ok, Pid}
+    after
+        ?TIMEOUT ->
+            {error, timeout}
+    end.
+
 -spec async_call(pid(), tuple() | atom()) -> response() |
                                              {error, Reason :: term()}.
 async_call(Pid, Request) ->
@@ -239,6 +261,7 @@ parse_ready(Data, #state{parser = Parser,
         {ok, [], NewParser} ->
             {next_state, startup, State#state{parser = NewParser}};
         {ok, [{0, ready}], NewParser} ->
+            send_ready(),
             {next_state, ready, State#state{parser = NewParser,
                                             streams = [0 | Streams]}};
         {ok, [{0, {authenticate, AuthClass}}], NewParser} ->
@@ -249,6 +272,10 @@ parse_ready(Data, #state{parser = Parser,
         {error, Reason} ->
             {stop, Reason, State}
     end.
+
+-spec send_ready() -> any().
+send_ready() ->
+    gen_fsm:send_all_state_event(self(), ready).
 
 try_auth(<<"org.apache.cassandra.auth.PasswordAuthenticator">>,
          #state{socket = Socket,
