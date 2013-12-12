@@ -25,7 +25,7 @@
 
 %% API
 -export([start_link/1]).
--export([query/3,
+-export(['query'/3,
          execute/4]).
 -export([prepare/2,
          options/1,
@@ -70,10 +70,10 @@
 start_link(Opts) ->
     gen_fsm:start_link(?MODULE, proplists:unfold(Opts), []).
 
--spec query(pid(), bitstring(), consistency()) ->
+-spec 'query'(pid(), bitstring(), consistency()) ->
           result() | {error, Reason :: term()}.
-query(Pid, QueryString, Consistency) ->
-    async_call(Pid, {query, QueryString, Consistency}).
+'query'(Pid, QueryString, Consistency) ->
+    async_call(Pid, {'query', QueryString, Consistency}).
 
 -spec prepare(pid(), bitstring()) -> prepared() | {error, Reason :: term()}.
 prepare(Pid, QueryString) ->
@@ -140,7 +140,7 @@ handle_sync_event(Event, _From, _StateName, State) ->
 startup(Event, State) ->
     {stop, {bad_event, Event}, State}.
 
-startup({_Ref, {query, _, _}}, _From, State) ->
+startup({_Ref, {'query', _, _}}, _From, State) ->
     {reply, {error, not_ready}, startup, State};
 startup({_Ref, {prepare, _}}, _From, State) ->
     {reply, {error, not_ready}, startup, State};
@@ -159,8 +159,8 @@ ready(Event, State) ->
 ready({_Ref, _}, _From, #state{streams = []} = State) ->
     ?CRITICAL("Too many requests to Cassandra!"),
     {reply, {error, too_many_requests}, ready, State};
-ready({Ref, {query, QueryString, Consistency}}, {From, _}, State) ->
-    Query = erlcql_encode:query(QueryString, Consistency),
+ready({Ref, {'query', QueryString, Consistency}}, {From, _}, State) ->
+    Query = erlcql_encode:'query'(QueryString, Consistency),
     send(Query, Ref, From, State);
 ready({Ref, {prepare, QueryString}}, {From, _}, State) ->
     Prepare = erlcql_encode:prepare(QueryString),
