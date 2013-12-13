@@ -20,7 +20,8 @@
 %% Fixtures -------------------------------------------------------------------
 
 init_per_suite(Config) ->
-    {ok, Pid} = erlcql:start_link(),
+    Opts = [{cql_version, <<"3.0.0">>}],
+    {ok, Pid} = erlcql:start_link("localhost", Opts),
     unlink(Pid),
     q(Pid, ?DROP_KEYSPACE),
     [{pid, Pid} | Config].
