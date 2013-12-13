@@ -4,6 +4,7 @@
 
 -include_lib("common_test/include/ct.hrl").
 
+-define(OPTS, [{cql_version, <<"3.0.0">>}]).
 -define(KEYSPACE, <<"erlcql_tests">>).
 
 -define(CREATE_KEYSPACE, <<"CREATE KEYSPACE IF NOT EXISTS erlcql_tests ",
@@ -20,8 +21,7 @@
 %% Fixtures -------------------------------------------------------------------
 
 init_per_suite(Config) ->
-    Opts = [{cql_version, <<"3.0.0">>}],
-    {ok, Pid} = erlcql:start_link("localhost", Opts),
+    {ok, Pid} = erlcql:start_link("localhost", ?OPTS),
     unlink(Pid),
     q(Pid, ?DROP_KEYSPACE),
     [{pid, Pid} | Config].
@@ -41,6 +41,10 @@ init_per_group(data_manipulation, Config) ->
     q(Pid, ?USE_KEYSPACE),
     q(Pid, ?CREATE_TABLE),
     Config;
+init_per_group(client, Config) ->
+    Pid = get_pid(Config),
+    q(Pid, ?CREATE_KEYSPACE),
+    Config;
 init_per_group(_GroupName, Config) ->
     Config.
 
@@ -48,6 +52,9 @@ end_per_group(types, Config) ->
     Pid = get_pid(Config),
     q(Pid, ?DROP_KEYSPACE);
 end_per_group(data_manipulation, Config) ->
+    Pid = get_pid(Config),
+    q(Pid, ?DROP_KEYSPACE);
+end_per_group(client, Config) ->
     Pid = get_pid(Config),
     q(Pid, ?DROP_KEYSPACE);
 end_per_group(_GroupName, _Config) ->
@@ -100,12 +107,16 @@ groups() ->
          set_of_floats,
          map_of_strings_to_stings]}]},
      {data_manipulation, [],
-      [insert]}].
+      [insert]},
+     {client, [],
+      [start_without_use,
+       start_with_use]}].
 
 all() ->
     [{group, keyspaces},
      {group, types},
-     {group, data_manipulation}].
+     {group, data_manipulation},
+     {group, client}].
 
 %% Tests ----------------------------------------------------------------------
 
@@ -218,6 +229,22 @@ insert(Config) ->
     {ok, void} = q(Pid, <<"INSERT INTO t (k, v) VALUES (1, 'one')">>),
     Rows = q(Pid, <<"SELECT * FROM t">>, one),
     {ok, {[[1, <<"one">>]], [{<<"k">>, int}, {<<"v">>, varchar}]}} = Rows.
+
+%% Client tests
+
+start_without_use(_Config) ->
+    {ok, Pid} = erlcql:start_link("localhost", ?OPTS),
+    unlink(Pid),
+    Msg = <<"no keyspace has been specified">>,
+    {error, {invalid, Msg, _}} = q(Pid, ?CREATE_TABLE),
+    exit(Pid, kill).
+
+start_with_use(_Config) ->
+    Opts = [{use, ?KEYSPACE} | ?OPTS],
+    {ok, Pid} = erlcql:start_link("localhost", Opts),
+    unlink(Pid),
+    {ok, _} = q(Pid, ?CREATE_TABLE),
+    exit(Pid, kill).
 
 %% Helpers --------------------------------------------------------------------
 

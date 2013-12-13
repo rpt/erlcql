@@ -233,9 +233,14 @@ wait_until_ready(Pid, Opts) ->
 wait_for_use(undefined, Pid) ->
     {ok, Pid};
 wait_for_use(Keyspace, Pid) ->
-    case ?MODULE:register(Pid, Keyspace) of
-        ready ->
-            {ok, Pid};
+    case cast(Pid, {'query', [<<"USE ">>, Keyspace], any}) of
+        {ok, {Ref, Stream}} ->
+            case wait_for_response(Ref, Pid, Stream) of
+                {ok, Keyspace} ->
+                    {ok, Pid};
+                {error, _Reason} ->
+                    {error, bad_keyspace}
+            end;
         {error, _Reason} ->
             {error, bad_keyspace}
     end.
@@ -243,18 +248,33 @@ wait_for_use(Keyspace, Pid) ->
 -spec async_call(pid(), tuple() | atom()) -> response() |
                                              {error, Reason :: term()}.
 async_call(Pid, Request) ->
+    case cast(Pid, Request) of
+        {ok, {Ref, Stream}} ->
+            wait_for_response(Ref, Pid, Stream);
+        {error, _Reason} = Error ->
+            Error
+    end.
+
+-spec cast(pid(), tuple() | atom()) -> {ok, Stream :: integer()} |
+                                       {error, Reason :: term()}.
+cast(Pid, Request) ->
     Ref = make_ref(),
     case gen_fsm:sync_send_event(Pid, {Ref, Request}) of
         {ok, Stream} ->
-            receive
-                {Ref, Response} ->
-                    Response
-            after ?TIMEOUT ->
-                    gen_fsm:send_all_state_event(Pid, {timeout, Stream}),
-                    {error, timeout}
-            end;
-        {error, Reason} ->
-            {error, Reason}
+            {ok, {Ref, Stream}};
+        {error, _Reason} = Error ->
+            Error
+    end.
+
+-spec wait_for_response(reference(), pid(), integer()) -> response() |
+                                                          {error, timeout}.
+wait_for_response(Ref, Pid, Stream) ->
+    receive
+        {Ref, Response} ->
+            Response
+    after ?TIMEOUT ->
+            gen_fsm:send_all_state_event(Pid, {timeout, Stream}),
+            {error, timeout}
     end.
 
 -spec send(request(), reference(), pid(), #state{}) ->
