@@ -34,7 +34,9 @@
 
 -export_types([reponse/0,
                consistency/0,
-               compression/0]).
+               compression/0,
+               event_type/0,
+               event_fun/0]).
 
 %%-----------------------------------------------------------------------------
 %% API functions
@@ -82,4 +84,5 @@ default(cql_version) -> <<"3.1.1">>;
 default(compression) -> false;
 default(tracing) -> false;
 default(use) -> undefined;
+default(event_handler) -> self();
 default(consistency) -> any.

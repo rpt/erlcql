@@ -37,6 +37,8 @@
          }).
 -type parser() :: #parser{}.
 
+-type event_fun() :: fun((event()) -> any()).
+
 %%-----------------------------------------------------------------------------
 %% Types
 %%-----------------------------------------------------------------------------
@@ -54,7 +56,7 @@
                   | ready()
                   | authenticate()
                   | supported()
-                  | event()
+                  | event_res()
                   | result().
 
 -type cql_error() :: {error, {Code :: error_code(),
@@ -63,7 +65,8 @@
 -type ready() :: ready.
 -type authenticate() :: {authenticate, AuthClass :: bitstring()}.
 -type supported() :: {ok, [{Name :: bitstring(), [Value :: bitstring()]}]}.
--type event() :: {event, {Kind :: atom(), Type :: atom(), Extra :: term()}}.
+-type event() :: {Kind :: atom(), Type :: atom(), Extra :: term()}.
+-type event_res() :: {event, event()}.
 -type result() :: void()
                 | rows()
                 | set_keyspace()

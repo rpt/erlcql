@@ -52,7 +52,8 @@
           credentials :: {bitstring(), bitstring()},
           flags :: {atom(), boolean()},
           streams = lists:seq(1, 127) :: [integer()],
-          parser :: parser()
+          parser :: parser(),
+          event_fun :: event_fun()
          }).
 
 -define(TCP_OPTS, [binary, {active, once}]).
@@ -70,7 +71,9 @@
           {ok, pid()} | ignore | {error, Reason :: term()}.
 start_link(Opts) ->
     Opts2 = [{parent, self()} | Opts],
-    case gen_fsm:start_link(?MODULE, proplists:unfold(Opts2), []) of
+    EventFun = event_fun(get_env_opt(event_handler, Opts)),
+    Opts3 = [{event_fun, EventFun} | Opts2],
+    case gen_fsm:start_link(?MODULE, proplists:unfold(Opts3), []) of
         {ok, Pid} ->
             wait_until_ready(Pid, Opts);
         {error, _Reason} = Error ->
@@ -118,6 +121,7 @@ init(Opts) ->
             Credentials = {Username, Password},
             Parser = erlcql_decode:new_parser(),
             Parent = get_opt(parent, Opts),
+            EventFun = get_opt(event_fun, Opts),
 
             Startup = erlcql_encode:startup(Compression, CQLVersion),
             Frame = erlcql_encode:frame(Startup, {false, Tracing}, 0),
@@ -128,7 +132,8 @@ init(Opts) ->
                                  flags = Flags,
                                  credentials = Credentials,
                                  async_ets = AsyncETS,
-                                 parser = Parser}};
+                                 parser = Parser,
+                                 event_fun = EventFun}};
         {error, Reason} ->
             ?ERROR("Cannot connect to Cassandra: ~s", [Reason]),
             {stop, Reason}
@@ -215,6 +220,12 @@ terminate(_Reason, _StateName, _State) ->
 %%-----------------------------------------------------------------------------
 %% Internal functions
 %%-----------------------------------------------------------------------------
+
+-spec event_fun(event_fun() | pid()) -> event_fun().
+event_fun(Fun) when is_function(Fun) ->
+    Fun;
+event_fun(Pid) when is_pid(Pid) ->
+    fun(Event) -> Pid ! Event end.
 
 -spec wait_until_ready(pid(), proplists:proplist()) ->
           {ok, pid()} | {error, timeout | bad_keyspace}.
@@ -338,8 +349,10 @@ parse_response(Data, #state{parser = Parser,
 handle_responses(Responses, State) ->
     lists:foldl(fun handle_response/2, State, Responses).
 
-handle_response({-1, {event, _} = Event}, State) ->
+handle_response({-1, {event, Event}},
+                #state{event_fun = EventFun} = State) ->
     ?INFO("Received an event from Cassandra: ~p", [Event]),
+    EventFun(Event),
     State;
 handle_response({Stream, Response}, #state{async_ets = AsyncETS,
                                            streams = Streams} = State) ->

@@ -13,15 +13,16 @@ erlcql:start_link(Options :: proplists:proplist()) ->
 
 #### Options
 
-| Option      | Type                 | Default           |
-|:----------- |:-------------------- |:----------------- |
-| host        | string()             | `"localhost"`     |
-| port        | integer()            | `9042`            |
-| username    | bitstring()          | `<<"cassandra">>` |
-| password    | bitstring()          | `<<"cassandra">>` |
-| cql_version | bitstring()          | `<<"3.1.1">>`     |
-| compression | erlcql:compression() | `false`           |
-| use         | bitstring()          |                   |
+| Option        | Type                            | Default           |
+|:------------- |:------------------------------- |:----------------- |
+| host          | string()                        | `"localhost"`     |
+| port          | integer()                       | `9042`            |
+| username      | bitstring()                     | `<<"cassandra">>` |
+| password      | bitstring()                     | `<<"cassandra">>` |
+| cql_version   | bitstring()                     | `<<"3.1.1">>`     |
+| compression   | erlcql:compression()            | false             |
+| use           | bitstring()                     | undefined         |
+| event_handler | pid() &#124; erlcql:event_fun() | self()            |
 
 ### Query
 
