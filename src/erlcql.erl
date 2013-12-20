@@ -32,11 +32,16 @@
 
 -include("erlcql.hrl").
 
+-opaque query_ref() :: {Ref :: reference(),
+                        Pid :: pid(),
+                        Stream :: integer()}.
+
 -export_type([response/0,
               consistency/0,
               compression/0,
               event_type/0,
-              event_fun/0]).
+              event_fun/0,
+              query_ref/0]).
 
 %%-----------------------------------------------------------------------------
 %% API functions

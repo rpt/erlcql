@@ -25,11 +25,13 @@
 
 %% API
 -export([start_link/1]).
--export(['query'/3,
-         execute/4]).
+-export(['query'/3, async_query/3,
+         execute/4, async_execute/4]).
 -export([prepare/2,
          options/1,
          register/2]).
+-export([await/1,
+         await/2]).
 
 %% gen_fsm callbacks
 -export([init/1,
@@ -85,6 +87,11 @@ start_link(Opts) ->
 'query'(Pid, QueryString, Consistency) ->
     async_call(Pid, {'query', QueryString, Consistency}).
 
+-spec async_query(pid(), bitstring(), consistency()) ->
+          {ok, QueryRef :: erlcql:query_ref()} | {error, Reason :: term()}.
+async_query(Pid, QueryString, Consistency) ->
+    cast(Pid, {'query', QueryString, Consistency}).
+
 -spec prepare(pid(), bitstring()) -> prepared() | {error, Reason :: term()}.
 prepare(Pid, QueryString) ->
     async_call(Pid, {prepare, QueryString}).
@@ -94,6 +101,11 @@ prepare(Pid, QueryString) ->
 execute(Pid, QueryId, Values, Consistency) ->
     async_call(Pid, {execute, QueryId, Values, Consistency}).
 
+-spec async_execute(pid(), binary(), [binary()], consistency()) ->
+          {ok, QueryRef :: erlcql:query_ref()} | {error, Reason :: term()}.
+async_execute(Pid, QueryId, Values, Consistency) ->
+    cast(Pid, {execute, QueryId, Values, Consistency}).
+
 -spec options(pid()) -> supported() | {error, Reason :: term()}.
 options(Pid) ->
     async_call(Pid, options).
@@ -101,6 +113,23 @@ options(Pid) ->
 -spec register(pid(), [event_type()]) -> ready | {error, Reason :: term()}.
 register(Pid, Events) ->
     async_call(Pid, {register, Events}).
+
+-spec await(erlcql:query_ref()) -> response() | {error, Reason :: term()}.
+await({ok, QueryRef}) ->
+    do_await(QueryRef, ?TIMEOUT);
+await({error, _Reason} = Error) ->
+    Error;
+await(QueryRef) ->
+    do_await(QueryRef, ?TIMEOUT).
+
+-spec await(erlcql:query_ref(), integer()) ->
+          response() | {error, Reason :: term()}.
+await({ok, QueryRef}, Timeout) ->
+    do_await(QueryRef, Timeout);
+await({error, _Reason} = Error, _Timeout) ->
+    Error;
+await(QueryRef, Timeout) ->
+    do_await(QueryRef, Timeout).
 
 %%-----------------------------------------------------------------------------
 %% gen_fsm callbacks
@@ -245,8 +274,8 @@ wait_for_use(undefined, Pid) ->
     {ok, Pid};
 wait_for_use(Keyspace, Pid) ->
     case cast(Pid, {'query', [<<"USE ">>, Keyspace], any}) of
-        {ok, {Ref, Stream}} ->
-            case wait_for_response(Ref, Pid, Stream) of
+        {ok, QueryRef} ->
+            case await(QueryRef) of
                 {ok, Keyspace} ->
                     {ok, Pid};
                 {error, _Reason} ->
@@ -260,30 +289,30 @@ wait_for_use(Keyspace, Pid) ->
                                              {error, Reason :: term()}.
 async_call(Pid, Request) ->
     case cast(Pid, Request) of
-        {ok, {Ref, Stream}} ->
-            wait_for_response(Ref, Pid, Stream);
+        {ok, QueryRef} ->
+            await(QueryRef);
         {error, _Reason} = Error ->
             Error
     end.
 
--spec cast(pid(), tuple() | atom()) -> {ok, Stream :: integer()} |
+-spec cast(pid(), tuple() | atom()) -> {ok, QueryRef :: erlcql:query_ref()} |
                                        {error, Reason :: term()}.
 cast(Pid, Request) ->
     Ref = make_ref(),
     case gen_fsm:sync_send_event(Pid, {Ref, Request}) of
         {ok, Stream} ->
-            {ok, {Ref, Stream}};
+            {ok, {Ref, Pid, Stream}};
         {error, _Reason} = Error ->
             Error
     end.
 
--spec wait_for_response(reference(), pid(), integer()) -> response() |
-                                                          {error, timeout}.
-wait_for_response(Ref, Pid, Stream) ->
+-spec do_await(erlcql:query_ref(), integer()) ->
+          response() | {error, Reason :: term()}.
+do_await({Ref, Pid, Stream}, Timeout) ->
     receive
         {Ref, Response} ->
             Response
-    after ?TIMEOUT ->
+    after Timeout ->
             gen_fsm:send_all_state_event(Pid, {timeout, Stream}),
             {error, timeout}
     end.
