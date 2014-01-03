@@ -41,8 +41,8 @@ erlcql:start_link(Options :: proplists:proplist()) ->
 | inet                  | inet:ip_address()           |
 | int                   | integer()                   |
 | timestamp             | integer()                   |
-| timeuuid              | uuid:uuid()                 |
-| uuid                  | uuid:uuid()                 |
+| timeuuid              | uuid()                      |
+| uuid                  | uuid()                      |
 | varchar/text          | bitstring()                 |
 | varint                | integer()                   |
 | list&lt;type&gt;      | list(type())                |
