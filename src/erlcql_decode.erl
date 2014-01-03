@@ -404,7 +404,7 @@ convert_value(timestamp, Value) ->
 convert_value(timeuuid, Value) ->
     convert_value(uuid, Value);
 convert_value(uuid, <<_:128>> = Uuid) ->
-    list_to_binary(uuid:to_string(Uuid));
+    list_to_binary(uuid:uuid_to_string(Uuid));
 convert_value(varint, Value) ->
     binary:decode_unsigned(Value);
 convert_value({list, Type}, <<N:?SHORT, Data/binary>>) ->

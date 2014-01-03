@@ -147,6 +147,8 @@
                 | {set, option_id()}
                 | {custom, bitstring()}.
 
+-type uuid() :: binary().
+
 -type compression() :: snappy
                      | lz4
                      | false.
