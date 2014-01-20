@@ -404,7 +404,7 @@ convert_value(timestamp, Value) ->
 convert_value(timeuuid, Value) ->
     convert_value(uuid, Value);
 convert_value(uuid, <<_:128>> = Uuid) ->
-    list_to_binary(uuid:to_string(Uuid));
+    uuid_to_string(Uuid);
 convert_value(varint, Value) ->
     binary:decode_unsigned(Value);
 convert_value({list, Type}, <<N:?SHORT, Data/binary>>) ->
@@ -415,6 +415,11 @@ convert_value({map, KeyType, ValueType}, <<N:?SHORT, Data/binary>>) ->
     convert_map(N, {KeyType, ValueType}, Data, []);
 convert_value(_Other, Value) ->
     Value.
+
+-spec uuid_to_string(binary()) -> bitstring().
+uuid_to_string(<<U0:32, U1:16, U2:16, U3:16, U4:48>>) ->
+    Format = "~8.16.0b-~4.16.0b-~4.16.0b-~4.16.0b-~12.16.0b",
+    iolist_to_binary(io_lib:format(Format, [U0, U1, U2, U3, U4])).
 
 -spec convert_list(integer(), option_id(), binary(), [term()]) -> [term()].
 convert_list(0, _Type, <<>>, Values) ->

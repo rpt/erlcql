@@ -268,7 +268,7 @@ wait_until_ready(Pid, Opts) ->
             {error, timeout}
     end.
 
--spec wait_for_use(pid(), proplists:proplist()) ->
+-spec wait_for_use(undefined | bitstring(), pid()) ->
           {ok, pid()} | {error, bad_keyspace}.
 wait_for_use(undefined, Pid) ->
     {ok, Pid};

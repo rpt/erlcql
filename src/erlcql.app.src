@@ -8,5 +8,4 @@
    [kernel,
     stdlib,
     snappy,
-    lz4,
-    uuid]}]}.
+    lz4]}]}.
