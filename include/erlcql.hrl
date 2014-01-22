@@ -74,7 +74,7 @@
                 | schema_change().
 
 -type void() :: {ok, void}.
--type rows() :: {ok, {Rows :: [[binary()]], Cols :: column_specs()}}.
+-type rows() :: {ok, {Rows :: [[term()]], Cols :: column_specs()}}.
 -type set_keyspace() :: {ok, Keyspace :: bitstring()}.
 -type prepared() :: {ok, PreparedQueryId :: binary()}.
 -type schema_change() :: {ok, created | updated | dropped}.
