@@ -154,6 +154,7 @@
 -type column_specs() :: [{Name :: bitstring(), Type :: option()}].
 
 -type inet() :: {inet:ip_address(), inet:port_number()}.
+-type uuid() :: bitstring().
 
 %%-----------------------------------------------------------------------------
 %% Logging macros
