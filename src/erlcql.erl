@@ -61,11 +61,11 @@ start_link(Host, Opts) ->
     Opts2 = [{host, Host} | Opts],
     erlcql_client:start_link(Opts2).
 
--spec q(pid(), bitstring()) -> result() | {error, Reason :: term()}.
+-spec q(pid(), iodata()) -> result() | {error, Reason :: term()}.
 q(Pid, Query) ->
     q(Pid, Query, default(consistency)).
 
--spec q(pid(), bitstring(), consistency()) ->
+-spec q(pid(), iodata(), consistency()) ->
           result() | {error, Reason :: term()}.
 q(Pid, Query, Consistency) ->
     erlcql_client:'query'(Pid, Query, Consistency).

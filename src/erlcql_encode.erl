@@ -67,12 +67,12 @@ options() ->
     {options, []}.
 
 %% @doc Encodes the 'query' request message body.
--spec 'query'(iolist(), consistency()) -> {'query', iolist()}.
+-spec 'query'(iodata(), consistency()) -> {'query', iolist()}.
 'query'(QueryString, Consistency) ->
     {'query', [long_string(QueryString), consistency(Consistency)]}.
 
 %% @doc Encodes the prepare request message body.
--spec prepare(iolist()) -> {prepare, iolist()}.
+-spec prepare(iodata()) -> {prepare, iolist()}.
 prepare(QueryString) ->
     {prepare, [long_string(QueryString)]}.
 

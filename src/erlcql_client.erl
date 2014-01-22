@@ -82,17 +82,17 @@ start_link(Opts) ->
             Error
     end.
 
--spec 'query'(pid(), bitstring(), consistency()) ->
+-spec 'query'(pid(), iodata(), consistency()) ->
           result() | {error, Reason :: term()}.
 'query'(Pid, QueryString, Consistency) ->
     async_call(Pid, {'query', QueryString, Consistency}).
 
--spec async_query(pid(), bitstring(), consistency()) ->
+-spec async_query(pid(), iodata(), consistency()) ->
           {ok, QueryRef :: erlcql:query_ref()} | {error, Reason :: term()}.
 async_query(Pid, QueryString, Consistency) ->
     cast(Pid, {'query', QueryString, Consistency}).
 
--spec prepare(pid(), bitstring()) -> prepared() | {error, Reason :: term()}.
+-spec prepare(pid(), iodata()) -> prepared() | {error, Reason :: term()}.
 prepare(Pid, QueryString) ->
     async_call(Pid, {prepare, QueryString}).
 
