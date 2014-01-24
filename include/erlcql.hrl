@@ -74,7 +74,7 @@
                 | schema_change().
 
 -type void() :: {ok, void}.
--type rows() :: {ok, {Rows :: [[term()]], Cols :: column_specs()}}.
+-type rows() :: {ok, {Rows :: [[type()]], Cols :: column_specs()}}.
 -type set_keyspace() :: {ok, Keyspace :: bitstring()}.
 -type prepared() :: {ok, PreparedQueryId :: binary()}.
 -type schema_change() :: {ok, created | updated | dropped}.
@@ -154,7 +154,29 @@
 -type column_specs() :: [{Name :: bitstring(), Type :: option()}].
 
 -type inet() :: {inet:ip_address(), inet:port_number()}.
+
+%% Types ----------------------------------------------------------------------
+
 -type uuid() :: bitstring().
+
+-type native_type() :: binary()
+                     | bitstring()
+                     | boolean()
+                     | integer()
+                     | float()
+                     | uuid()
+                     | inet:ip_address().
+
+-type erlcql_list() :: [native_type()].
+-type set() :: [native_type()].
+-type map() :: [{native_type(), native_type()}].
+
+-type collection_type() :: erlcql_list()
+                         | set()
+                         | map().
+
+-type type() :: native_type()
+              | collection_type().
 
 %%-----------------------------------------------------------------------------
 %% Logging macros

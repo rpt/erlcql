@@ -41,8 +41,14 @@
               compression/0,
               event_type/0,
               event_fun/0,
-              query_ref/0,
-              uuid/0]).
+              query_ref/0]).
+-export_type([type/0,
+              native_type/0,
+              uuid/0,
+              collection_type/0,
+              erlcql_list/0,
+              set/0,
+              map/0]).
 
 %%-----------------------------------------------------------------------------
 %% API functions
