@@ -97,4 +97,4 @@ default(compression) -> false;
 default(tracing) -> false;
 default(use) -> undefined;
 default(event_handler) -> self();
-default(consistency) -> any.
+default(consistency) -> quorum.
