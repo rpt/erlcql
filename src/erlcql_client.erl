@@ -27,7 +27,7 @@
 -export([start_link/1]).
 -export(['query'/3, async_query/3,
          execute/4, async_execute/4]).
--export([prepare/2,
+-export([prepare/2, prepare/3,
          options/1,
          register/2]).
 -export([await/1,
@@ -50,26 +50,33 @@
 -record(state, {
           parent :: pid(),
           socket :: port(),
-          async_ets :: integer(),
+          async_ets :: ets:tid(),
+          prepared_ets :: ets:tid(),
           credentials :: {bitstring(), bitstring()},
           flags :: {atom(), boolean()},
           streams = lists:seq(1, 127) :: [integer()],
           parser :: parser(),
           event_fun :: event_fun()
          }).
+-type state() :: #state{}.
+
+-type proplist() :: proplists:proplist().
 
 -define(TCP_OPTS, [binary, {active, once}]).
--define(ETS_NAME, erlcql_async).
--define(ETS_OPTS, [set, private,
-                   {write_concurrency, true},
-                   {read_concurrency, true}]).
+-define(ASYNC_ETS_NAME, erlcql_async).
+-define(ASYNC_ETS_OPTS, [set, private,
+                         {write_concurrency, true},
+                         {read_concurrency, true}]).
+-define(PREPARED_ETS_NAME, erlcql_prepared).
+-define(PREPARED_ETS_OPTS, [set, private,
+                            {read_concurrency, true}]).
 -define(TIMEOUT, timer:seconds(5)).
 
 %%-----------------------------------------------------------------------------
 %% API
 %%-----------------------------------------------------------------------------
 
--spec start_link(proplists:proplist()) ->
+-spec start_link(proplist()) ->
           {ok, pid()} | ignore | {error, Reason :: term()}.
 start_link(Opts) ->
     Opts2 = [{parent, self()} | Opts],
@@ -96,7 +103,11 @@ async_query(Pid, QueryString, Consistency) ->
 prepare(Pid, QueryString) ->
     async_call(Pid, {prepare, QueryString}).
 
--spec execute(pid(), binary(), [binary()], consistency()) ->
+-spec prepare(pid(), iodata(), atom()) -> ok | {error, Reason :: term()}.
+prepare(Pid, QueryString, Name) ->
+    async_call(Pid, {prepare, QueryString, Name}).
+
+-spec execute(pid(), erlcql:uuid() | atom(), [binary()], consistency()) ->
           result() | {error, Reason :: term()}.
 execute(Pid, QueryId, Values, Consistency) ->
     async_call(Pid, {execute, QueryId, Values, Consistency}).
@@ -140,7 +151,8 @@ init(Opts) ->
     Port = get_env_opt(port, Opts),
     case gen_tcp:connect(Host, Port, ?TCP_OPTS) of
         {ok, Socket} ->
-            AsyncETS = ets:new(?ETS_NAME, ?ETS_OPTS),
+            AsyncETS = ets:new(?ASYNC_ETS_NAME, ?ASYNC_ETS_OPTS),
+            PreparedETS = maybe_create_prepared_ets(Opts),
             Compression = get_env_opt(compression, Opts),
             Tracing = get_env_opt(tracing, Opts),
             Flags = {Compression, Tracing},
@@ -161,6 +173,7 @@ init(Opts) ->
                                  flags = Flags,
                                  credentials = Credentials,
                                  async_ets = AsyncETS,
+                                 prepared_ets = PreparedETS,
                                  parser = Parser,
                                  event_fun = EventFun}};
         {error, Reason} ->
@@ -190,6 +203,8 @@ startup({_Ref, {'query', _, _}}, _From, State) ->
     {reply, {error, not_ready}, startup, State};
 startup({_Ref, {prepare, _}}, _From, State) ->
     {reply, {error, not_ready}, startup, State};
+startup({_Ref, {prepare, _, _}}, _From, State) ->
+    {reply, {error, not_ready}, startup, State};
 startup({_Ref, {execute, _, _, _}}, _From, State) ->
     {reply, {error, not_ready}, startup, State};
 startup({_Ref, options}, _From, State) ->
@@ -207,19 +222,39 @@ ready({_Ref, _}, _From, #state{streams = []} = State) ->
     {reply, {error, too_many_requests}, ready, State};
 ready({Ref, {'query', QueryString, Consistency}}, {From, _}, State) ->
     Query = erlcql_encode:'query'(QueryString, Consistency),
-    send(Query, Ref, From, State);
+    send(Query, {Ref, From}, State);
 ready({Ref, {prepare, QueryString}}, {From, _}, State) ->
     Prepare = erlcql_encode:prepare(QueryString),
-    send(Prepare, Ref, From, State);
-ready({Ref, {execute, QueryId, Values, Consistency}}, {From, _}, State) ->
+    send(Prepare, {Ref, From}, State);
+ready({Ref, {prepare, QueryString, Name}}, {From, _},
+      #state{prepared_ets = PreparedETS} = State) ->
+    Prepare = erlcql_encode:prepare(QueryString),
+    Fun = fun({ok, QueryId} = Response) ->
+                  true = ets:insert(PreparedETS, {Name, QueryId}),
+                  Response;
+             ({error, _} = Response) ->
+                  Response
+          end,
+    send(Prepare, {Ref, From, Fun}, State);
+ready({Ref, {execute, QueryId, Values, Consistency}},
+      {From, _}, State) when is_binary(QueryId) ->
     Execute = erlcql_encode:execute(QueryId, Values, Consistency),
-    send(Execute, Ref, From, State);
+    send(Execute, {Ref, From}, State);
+ready({Ref, {execute, QueryName, Values, Consistency}}, {From, _},
+      #state{prepared_ets = PreparedETS} = State) when is_atom(QueryName) ->
+    case ets:lookup(PreparedETS, QueryName) of
+        [{QueryName, QueryId}] ->
+            Execute = erlcql_encode:execute(QueryId, Values, Consistency),
+            send(Execute, {Ref, From}, State);
+        [] ->
+            {reply, {error, invalid_query_name}, ready, State}
+    end;
 ready({Ref, options}, {From, _}, State) ->
     Options = erlcql_encode:options(),
-    send(Options, Ref, From, State);
+    send(Options, {Ref, From}, State);
 ready({Ref, {register, Events}}, {From, _}, State) ->
     Register = erlcql_encode:register(Events),
-    send(Register, Ref, From, State);
+    send(Register, {Ref, From}, State);
 ready(Event, _From, State) ->
     {stop, {bad_event, Event}, State}.
 
@@ -250,13 +285,22 @@ terminate(_Reason, _StateName, _State) ->
 %% Internal functions
 %%-----------------------------------------------------------------------------
 
+-spec maybe_create_prepared_ets(proplist()) -> ets:tid().
+maybe_create_prepared_ets(Opts) ->
+   case get_opt(prepared_statements_ets_tid, Opts) of
+       undefined ->
+           ets:new(?PREPARED_ETS_NAME, ?PREPARED_ETS_OPTS);
+       Tid ->
+           Tid
+   end.
+
 -spec event_fun(event_fun() | pid()) -> event_fun().
 event_fun(Fun) when is_function(Fun) ->
     Fun;
 event_fun(Pid) when is_pid(Pid) ->
     fun(Event) -> Pid ! Event end.
 
--spec wait_until_ready(pid(), proplists:proplist()) ->
+-spec wait_until_ready(pid(), proplist()) ->
           {ok, pid()} | {error, timeout | bad_keyspace}.
 wait_until_ready(Pid, Opts) ->
     receive
@@ -317,15 +361,16 @@ do_await({Ref, Pid, Stream}, Timeout) ->
             {error, timeout}
     end.
 
--spec send(request(), reference(), pid(), #state{}) ->
-          {reply, {ok, Stream :: integer()}, ready, NewState :: #state{}}.
-send(Message, Ref, From, #state{socket = Socket,
-                                flags = Flags,
-                                streams = [Stream | Streams],
-                                async_ets = AsyncETS} = State) ->
+-spec send(request(), Info, state()) ->
+          {reply, {ok, Stream :: integer()}, ready, NewState :: state()} when
+      Info :: {reference(), pid()} | {reference(), pid(), fun()}.
+send(Message, Info, #state{socket = Socket,
+                           flags = Flags,
+                           streams = [Stream | Streams],
+                           async_ets = AsyncETS} = State) ->
     Frame = erlcql_encode:frame(Message, Flags, Stream),
     ok = gen_tcp:send(Socket, Frame),
-    true = ets:insert(AsyncETS, {Stream, {Ref, From}}),
+    true = ets:insert(AsyncETS, {Stream, Info}),
     {reply, {ok, Stream}, ready, State#state{streams = Streams}}.
 
 parse_ready(Data, #state{parser = Parser,
@@ -383,25 +428,31 @@ handle_response({-1, {event, Event}},
     ?INFO("Received an event from Cassandra: ~p", [Event]),
     EventFun(Event),
     State;
-handle_response({Stream, Response}, #state{async_ets = AsyncETS,
-                                           streams = Streams} = State) ->
+handle_response({Stream, Response}, #state{async_ets = AsyncETS} = State) ->
     case ets:lookup(AsyncETS, Stream) of
         [{Stream, {Ref, Pid}}] ->
-            true = ets:delete(AsyncETS, Stream),
-            Pid ! {Ref, Response},
-            State#state{streams = [Stream | Streams]};
+            send_response(Stream, {Ref, Response}, Pid, State);
+        [{Stream, {Ref, Pid, Fun}}] ->
+            Response2 = Fun(Response),
+            send_response(Stream, {Ref, Response2}, Pid, State);
         [] ->
             ?WARNING("Unexpected response (~p): ~p", [Stream, Response]),
-            State;
-        _Else ->
-            ?CRITICAL("This should NOT happen: more then one async stream!")
+            State
     end.
+
+-spec send_response(integer(), {erlcql:query_ref(), erlcql:response()},
+                    pid(), state()) -> state().
+send_response(Stream, Response, Pid, #state{async_ets = AsyncETS,
+                                            streams = Streams} = State) ->
+    true = ets:delete(AsyncETS, Stream),
+    Pid ! Response,
+    State#state{streams = [Stream | Streams]}.
 
 %%-----------------------------------------------------------------------------
 %% Helper functions
 %%-----------------------------------------------------------------------------
 
--spec get_env_opt(atom(), proplists:proplist()) -> Value :: term().
+-spec get_env_opt(atom(), proplist()) -> Value :: term().
 get_env_opt(Opt, Opts) ->
     case lists:keyfind(Opt, 1, Opts) of
         {Opt, Value} ->
@@ -410,13 +461,17 @@ get_env_opt(Opt, Opts) ->
             get_env(Opt)
     end.
 
--spec get_opt(atom(), proplists:proplist()) -> Value :: term().
+-spec get_opt(atom(), proplist()) -> Value :: term().
 get_opt(Opt, Opts) ->
+    get_opt(Opt, Opts, undefined).
+
+-spec get_opt(atom(), proplist(), term()) -> Value :: term().
+get_opt(Opt, Opts, Default) ->
     case lists:keyfind(Opt, 1, Opts) of
         {Opt, Value} ->
             Value;
         false ->
-            undefined
+            Default
     end.
 
 -spec get_env(atom()) -> Value :: term().
