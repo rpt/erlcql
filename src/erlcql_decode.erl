@@ -136,6 +136,8 @@ error2(<<ErrorCode:?INT, Data/binary>>) ->
                     read_timeout(Data);
                 already_exists ->
                     already_exists(Data);
+                unprepared ->
+                    unprepared(Data);
                 Other ->
                     other_error(Other, Data)
             end,
@@ -196,6 +198,12 @@ already_exists(<<Length:?SHORT, Message:Length/binary,
                  Length2:?SHORT, Keyspace:Length2/binary,
                  Length3:?SHORT, Table:Length3/binary>>) ->
     {already_exists, Message, {Keyspace, Table}}.
+
+-spec unprepared(binary()) ->
+          {unprepared, Message :: bitstring(), QueryId :: uuid()}.
+unprepared(<<Length:?SHORT, Message:Length/binary,
+             Length2:?SHORT, QueryId:Length2/binary>>) ->
+    {unprepared, Message, QueryId}.
 
 -spec other_error(error_code(), binary()) ->
           {Code :: error_code(), Message :: bitstring(), undefined}.
