@@ -95,6 +95,5 @@ default(password) -> <<"cassandra">>;
 default(cql_version) -> <<"3.1.1">>;
 default(compression) -> false;
 default(tracing) -> false;
-default(use) -> undefined;
 default(event_handler) -> self();
 default(consistency) -> quorum.

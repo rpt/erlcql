@@ -80,7 +80,12 @@ start_link(Opts) ->
     Opts3 = [{event_fun, EventFun} | Opts2],
     case gen_fsm:start_link(?MODULE, proplists:unfold(Opts3), []) of
         {ok, Pid} ->
-            wait_until_ready(Pid, Opts);
+            case wait_until_ready(Pid, Opts) of
+                ready ->
+                    {ok, Pid};
+                {error, _Reason} = Error ->
+                    Error
+            end;
         {error, _Reason} = Error ->
             Error
     end.
@@ -309,33 +314,65 @@ event_fun(Fun) when is_function(Fun) ->
 event_fun(Pid) when is_pid(Pid) ->
     fun(Event) -> Pid ! Event end.
 
--spec wait_until_ready(pid(), proplist()) ->
-          {ok, pid()} | {error, timeout | bad_keyspace}.
+-spec wait_until_ready(pid(), proplist()) -> ready | {error, atom()}.
 wait_until_ready(Pid, Opts) ->
     receive
         ready ->
-            Keyspace = get_env_opt(use, Opts),
-            wait_for_use(Keyspace, Pid)
+            init_env(Pid, Opts)
     after
         ?TIMEOUT ->
             {error, timeout}
     end.
 
--spec wait_for_use(undefined | bitstring(), pid()) ->
-          {ok, pid()} | {error, bad_keyspace}.
-wait_for_use(undefined, Pid) ->
-    {ok, Pid};
-wait_for_use(Keyspace, Pid) ->
-    case cast(Pid, {'query', [<<"USE ">>, Keyspace], any}) of
-        {ok, QueryRef} ->
-            case await(QueryRef) of
-                {ok, Keyspace} ->
-                    {ok, Pid};
-                {error, _Reason} ->
-                    {error, bad_keyspace}
-            end;
+-spec init_env(Pid, Opts) -> ok | {error, Reason} when
+      Pid :: pid(),
+      Opts :: proplist(),
+      Reason :: atom().
+init_env(Pid, Opts) ->
+    UseFun = fun(Keyspace) -> 'query'(Pid, [<<"USE ">>, Keyspace], any) end,
+    PrepareFun = fun(Queries) -> apply_prepare(Pid, Queries) end,
+    RegisterFun = fun(Events) -> ?MODULE:register(Pid, Events) end,
+    apply_funs([{use, UseFun, bad_keyspace},
+                {prepare, PrepareFun, prepare_failed},
+                {register, RegisterFun, register_failed}], Opts).
+
+-spec apply_prepare(Pid, Queries) -> {ok, void} | {error, Reason} when
+      Pid :: pid(),
+      Queries :: [Query],
+      Query :: {Name :: atom(), QueryString :: bitstring()},
+      Reason :: atom().
+apply_prepare(_Pid, []) ->
+    {ok, void};
+apply_prepare(Pid, [{Name, Query} | Queries]) ->
+    case prepare(Pid, Query, Name) of
+        {ok, _} ->
+            apply_prepare(Pid, Queries);
         {error, _Reason} ->
-            {error, bad_keyspace}
+            {error, prepare_failed}
+    end.
+
+-spec apply_funs(Funs, Opts) -> ok | {error, Reason} when
+      Funs :: [{Opt :: atom(), Fun, Reason}],
+      Fun :: fun(() -> Response),
+      Response :: erlcql:response(),
+      Opts :: proplist(),
+      Reason :: atom().
+apply_funs([], _Opts) ->
+    ready;
+apply_funs([{Key, Fun, Error} | Rest], Opts) ->
+    Value = get_opt(Key, Opts),
+    case Value of
+        undefined ->
+            apply_funs(Rest, Opts);
+        Value ->
+            case Fun(Value) of
+                {ok, _} ->
+                    apply_funs(Rest, Opts);
+                ready ->
+                    apply_funs(Rest, Opts);
+                {error, _Reason} ->
+                    {error, Error}
+            end
     end.
 
 -spec async_call(pid(), tuple() | atom()) -> response() |
