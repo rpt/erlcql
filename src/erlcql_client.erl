@@ -48,19 +48,17 @@
 -include("erlcql.hrl").
 
 -record(state, {
-          parent :: pid(),
-          socket :: port(),
-          async_ets :: ets:tid(),
-          prepared_ets :: ets:tid(),
+          async_ets :: ets(),
           credentials :: {bitstring(), bitstring()},
+          event_fun :: event_fun(),
           flags :: {atom(), boolean()},
-          streams = lists:seq(1, 127) :: [integer()],
+          parent :: pid(),
           parser :: parser(),
-          event_fun :: event_fun()
+          prepared_ets :: ets(),
+          socket :: socket(),
+          streams = lists:seq(1, 127) :: [integer()]
          }).
 -type state() :: #state{}.
-
--type proplist() :: proplists:proplist().
 
 -define(TCP_OPTS, [binary, {active, once}]).
 -define(ASYNC_ETS_NAME, erlcql_async).
@@ -76,8 +74,6 @@
 %% API
 %%-----------------------------------------------------------------------------
 
--spec start_link(proplist()) ->
-          {ok, pid()} | ignore | {error, Reason :: term()}.
 start_link(Opts) ->
     Opts2 = [{parent, self()} | Opts],
     EventFun = event_fun(get_env_opt(event_handler, Opts)),
@@ -151,35 +147,48 @@ init(Opts) ->
     Port = get_env_opt(port, Opts),
     case gen_tcp:connect(Host, Port, ?TCP_OPTS) of
         {ok, Socket} ->
-            AsyncETS = ets:new(?ASYNC_ETS_NAME, ?ASYNC_ETS_OPTS),
-            PreparedETS = maybe_create_prepared_ets(Opts),
-            Compression = get_env_opt(compression, Opts),
-            Tracing = get_env_opt(tracing, Opts),
-            Flags = {Compression, Tracing},
-            CQLVersion = get_env_opt(cql_version, Opts),
-            Username = get_env_opt(username, Opts),
-            Password = get_env_opt(password, Opts),
-            Credentials = {Username, Password},
-            Parser = erlcql_decode:new_parser(),
-            Parent = get_opt(parent, Opts),
-            EventFun = get_opt(event_fun, Opts),
-
-            Startup = erlcql_encode:startup(Compression, CQLVersion),
-            Frame = erlcql_encode:frame(Startup, {false, Tracing}, 0),
-            ok = gen_tcp:send(Socket, Frame),
-
-            {ok, startup, #state{parent = Parent,
-                                 socket = Socket,
-                                 flags = Flags,
-                                 credentials = Credentials,
-                                 async_ets = AsyncETS,
-                                 prepared_ets = PreparedETS,
-                                 parser = Parser,
-                                 event_fun = EventFun}};
+            State = init_state(Opts, Socket),
+            ok = send_startup(State, Opts),
+            {ok, startup, State};
         {error, Reason} ->
             ?ERROR("Cannot connect to Cassandra: ~s", [Reason]),
             {stop, Reason}
     end.
+
+-spec init_state(Opts, Socket) -> State when
+      Opts :: proplist(),
+      Socket :: socket(),
+      State :: state().
+init_state(Opts, Socket) ->
+    AsyncETS = ets:new(?ASYNC_ETS_NAME, ?ASYNC_ETS_OPTS),
+    Username = get_env_opt(username, Opts),
+    Password = get_env_opt(password, Opts),
+    Credentials = {Username, Password},
+    EventFun = get_opt(event_fun, Opts),
+    Compression = get_env_opt(compression, Opts),
+    Tracing = get_env_opt(tracing, Opts),
+    Flags = {Compression, Tracing},
+    Parent = get_opt(parent, Opts),
+    Parser = erlcql_decode:new_parser(),
+    PreparedETS = maybe_create_prepared_ets(Opts),
+    #state{async_ets = AsyncETS,
+           credentials = Credentials,
+           event_fun = EventFun,
+           flags = Flags,
+           parent = Parent,
+           parser = Parser,
+           prepared_ets = PreparedETS,
+           socket = Socket}.
+
+-spec send_startup(State, Opts) -> ok when
+      State :: state(),
+      Opts :: proplist().
+send_startup(#state{flags = {Compression, Tracing},
+                    socket = Socket}, Opts) ->
+    CQLVersion = get_env_opt(cql_version, Opts),
+    Startup = erlcql_encode:startup(Compression, CQLVersion),
+    Frame = erlcql_encode:frame(Startup, {false, Tracing}, 0),
+    gen_tcp:send(Socket, Frame).
 
 handle_event({timeout, Stream}, StateName,
              #state{async_ets = AsyncETS,
@@ -285,7 +294,7 @@ terminate(_Reason, _StateName, _State) ->
 %% Internal functions
 %%-----------------------------------------------------------------------------
 
--spec maybe_create_prepared_ets(proplist()) -> ets:tid().
+-spec maybe_create_prepared_ets(proplist()) -> ets().
 maybe_create_prepared_ets(Opts) ->
    case get_opt(prepared_statements_ets_tid, Opts) of
        undefined ->

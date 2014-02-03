@@ -43,6 +43,10 @@
 %% Types
 %%-----------------------------------------------------------------------------
 
+-type proplist() :: proplists:proplist().
+-type socket() :: inet:socket().
+-type ets() :: ets:tid().
+
 -type request() :: {Opcode :: request_opcode(), Data :: iolist()}.
 -type request_opcode() :: startup
                         | credentials
