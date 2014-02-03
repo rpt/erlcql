@@ -92,7 +92,7 @@ default(host) -> "localhost";
 default(port) -> 9042;
 default(username) -> <<"cassandra">>;
 default(password) -> <<"cassandra">>;
-default(cql_version) -> <<"3.1.1">>;
+default(cql_version) -> <<"3.1.2">>;
 default(compression) -> false;
 default(tracing) -> false;
 default(event_handler) -> self();
