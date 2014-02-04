@@ -30,6 +30,11 @@
 %% Encode/decode types
 -define(INT, 4/big-signed-integer-unit:8).
 -define(SHORT, 2/big-unsigned-integer-unit:8).
+-define(BYTE, 1/big-signed-integer-unit:8).
+-define(BYTE2, 2/big-signed-integer-unit:8).
+
+-define(int(X), <<X:?INT>>).
+-define(short(X), <<X:?SHORT>>).
 
 %% Parser
 -record(parser, {

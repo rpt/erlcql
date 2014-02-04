@@ -28,8 +28,6 @@
 
 -include("erlcql.hrl").
 
--define(BYTE, 1/big-signed-integer-unit:8).
--define(BYTE2, 2/big-signed-integer-unit:8).
 -define(STRING(Length), Length/bytes).
 
 %%-----------------------------------------------------------------------------
@@ -382,72 +380,8 @@ row_values(N, [_ | Types], <<-1:?INT, Rest/binary>>, Values) ->
     row_values(N - 1, Types, Rest, [null | Values]);
 row_values(N, [Type | Types], <<Length:?INT, Value:Length/binary,
                                 Rest/binary>>, Values) ->
-    Value2 = convert_value(Type, Value),
+    Value2 = erlcql_convert:from_binary(Type, Value),
     row_values(N - 1, Types, Rest, [Value2 | Values]).
-
--spec convert_value(option(), binary()) -> type().
-convert_value(bigint, <<Int:64/signed>>) ->
-    Int;
-convert_value(boolean, <<_:7, Int:1>>) ->
-    Int == 1;
-convert_value(counter, Value) ->
-    convert_value(bigint, Value);
-convert_value(decimal, <<Scale:32, Binary/binary>>) ->
-    Size = byte_size(Binary) * 8,
-    <<Value:Size/signed>> = Binary,
-    Value * math:pow(10, -Scale);
-convert_value(double, <<Float:64/float>>) ->
-    Float;
-convert_value(float, <<Float:32/float>>) ->
-    Float;
-convert_value(inet, <<A:?BYTE, B:?BYTE, C:?BYTE, D:?BYTE>>) ->
-    {A, B, C, D};
-convert_value(inet, <<A:?BYTE2, B:?BYTE2, C:?BYTE2, D:?BYTE2,
-                      E:?BYTE2, F:?BYTE2, G:?BYTE2, H:?BYTE2>>) ->
-    {A, B, C, D, E, F, G, H};
-convert_value(int, <<Int:32/signed>>) ->
-    Int;
-convert_value(timestamp, Value) ->
-    convert_value(bigint, Value);
-convert_value(timeuuid, Value) ->
-    convert_value(uuid, Value);
-convert_value(uuid, <<_:128>> = Uuid) ->
-    uuid_to_string(Uuid);
-convert_value(varint, Value) ->
-    binary:decode_unsigned(Value);
-convert_value({list, Type}, <<N:?SHORT, Data/binary>>) ->
-    convert_list(N, Type, Data, []);
-convert_value({set, Type}, Value) ->
-    convert_value({list, Type}, Value);
-convert_value({map, KeyType, ValueType}, <<N:?SHORT, Data/binary>>) ->
-    convert_map(N, {KeyType, ValueType}, Data, []);
-convert_value(_Other, Value) ->
-    Value.
-
--spec uuid_to_string(binary()) -> erlcql:uuid().
-uuid_to_string(<<U0:32, U1:16, U2:16, U3:16, U4:48>>) ->
-    Format = "~8.16.0b-~4.16.0b-~4.16.0b-~4.16.0b-~12.16.0b",
-    iolist_to_binary(io_lib:format(Format, [U0, U1, U2, U3, U4])).
-
--spec convert_list(integer(), option_id(),
-                   binary(), erlcql_list()) -> erlcql_list().
-convert_list(0, _Type, <<>>, Values) ->
-    lists:reverse(Values);
-convert_list(N, Type, <<Size:?SHORT, Value:Size/binary,
-                        Rest/binary>>, Values) ->
-    Value2 = convert_value(Type, Value),
-    convert_list(N - 1, Type, Rest, [Value2 | Values]).
-
--spec convert_map(integer(), {option_id(), option_id()},
-                  binary(), erlcql:map()) -> erlcql:map().
-convert_map(0, _Types, <<>>, Values) ->
-    lists:reverse(Values);
-convert_map(N, {KeyType, ValueType} = Types,
-            <<KeySize:?SHORT, Key:KeySize/binary, ValueSize:?SHORT,
-              Value:ValueSize/binary, Rest/binary>>, Values) ->
-    Key2 = convert_value(KeyType, Key),
-    Value2 = convert_value(ValueType, Value),
-    convert_map(N - 1, Types, Rest, [{Key2, Value2} | Values]).
 
 %% Result: Set keyspace
 
