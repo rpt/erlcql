@@ -108,12 +108,12 @@ prepare(Pid, QueryString) ->
 prepare(Pid, QueryString, Name) ->
     async_call(Pid, {prepare, QueryString, Name}).
 
--spec execute(pid(), erlcql:uuid() | atom(), [binary()], consistency()) ->
+-spec execute(pid(), erlcql:uuid() | atom(), values(), consistency()) ->
           result() | {error, Reason :: term()}.
 execute(Pid, QueryId, Values, Consistency) ->
     async_call(Pid, {execute, QueryId, Values, Consistency}).
 
--spec async_execute(pid(), binary(), [binary()], consistency()) ->
+-spec async_execute(pid(), binary(), values(), consistency()) ->
           {ok, QueryRef :: erlcql:query_ref()} | {error, Reason :: term()}.
 async_execute(Pid, QueryId, Values, Consistency) ->
     cast(Pid, {execute, QueryId, Values, Consistency}).

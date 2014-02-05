@@ -42,7 +42,8 @@
               event_type/0,
               event_fun/0,
               query_ref/0]).
--export_type([type/0,
+-export_type([values/0,
+              type/0,
               native_type/0,
               uuid/0,
               collection_type/0,
@@ -77,12 +78,12 @@ q(Pid, Query) ->
 q(Pid, Query, Consistency) ->
     erlcql_client:'query'(Pid, Query, Consistency).
 
--spec e(pid(), binary(), [binary()]) ->
+-spec e(pid(), binary(), values()) ->
           result() | {error, Reason :: term()}.
 e(Pid, QueryId, Values) ->
     e(Pid, QueryId, Values, default(consistency)).
 
--spec e(pid(), binary(), [binary()], consistency()) ->
+-spec e(pid(), binary(), values(), consistency()) ->
           result() | {error, Reason :: term()}.
 e(Pid, QueryId, Values, Consistency) ->
     erlcql_client:execute(Pid, QueryId, Values, Consistency).
