@@ -30,8 +30,12 @@
 %% From binary ----------------------------------------------------------------
 
 -spec from_binary(option(), binary()) -> type().
+from_binary(ascii, Binary) ->
+    Binary;
 from_binary(bigint, <<Int:64/signed>>) ->
     Int;
+from_binary(blob, Binary) ->
+    Binary;
 from_binary(boolean, <<_:7, Int:1>>) ->
     Int == 1;
 from_binary(counter, Value) ->
@@ -52,12 +56,16 @@ from_binary(inet, <<A:?BYTE2, B:?BYTE2, C:?BYTE2, D:?BYTE2,
     {A, B, C, D, E, F, G, H};
 from_binary(int, <<Int:32/signed>>) ->
     Int;
+from_binary(text, Binary) ->
+    Binary;
 from_binary(timestamp, Value) ->
     from_binary(bigint, Value);
 from_binary(timeuuid, Value) ->
     from_binary(uuid, Value);
 from_binary(uuid, <<_:128>> = Uuid) ->
     uuid_to_string(Uuid);
+from_binary(varchar, Binary) ->
+    Binary;
 from_binary(varint, Value) ->
     binary:decode_unsigned(Value);
 from_binary({list, Type}, <<N:?SHORT, Data/binary>>) ->
@@ -66,8 +74,8 @@ from_binary({set, Type}, Value) ->
     from_binary({list, Type}, Value);
 from_binary({map, KeyType, ValueType}, <<N:?SHORT, Data/binary>>) ->
     map_from_binary(N, {KeyType, ValueType}, Data, []);
-from_binary(_Other, Value) ->
-    Value.
+from_binary({custom, _Name}, Binary) ->
+    Binary.
 
 -spec list_from_binary(integer(), option_id(),
                        binary(), erlcql_list()) -> erlcql_list().
@@ -111,8 +119,12 @@ to_binary(Values) ->
       Binary :: iodata().
 to_binary(_, null) ->
     null;
+to_binary(ascii, Binary) ->
+    Binary;
 to_binary(bigint, Int) ->
     <<Int:64/signed>>;
+to_binary(blob, Binary) ->
+    Binary;
 to_binary(boolean, true) ->
     <<1>>;
 to_binary(boolean, false) ->
@@ -131,12 +143,16 @@ to_binary(inet, {A, B, C, D, E, F, G, H}) ->
       E:?BYTE2, F:?BYTE2, G:?BYTE2, H:?BYTE2>>;
 to_binary(int, Int) ->
     ?int(Int);
+to_binary(text, Binary) ->
+    Binary;
 to_binary(timestamp, Timestamp) ->
     to_binary(bigint, Timestamp);
 to_binary(timeuuid, UUID) ->
     to_binary(uuid, UUID);
 to_binary(uuid, UUID) ->
     uuid_to_binary(UUID);
+to_binary(varchar, Binary) ->
+    Binary;
 to_binary(varint, Int) ->
     binary:encode_unsigned(Int);
 to_binary({list, Type}, List) ->
@@ -146,7 +162,9 @@ to_binary({set, Type}, Set) ->
     to_binary({list, Type}, Set);
 to_binary({map, KeyType, ValueType}, Map) ->
     Map2 = [{{KeyType, Key}, {ValueType, Value}} || {Key, Value} <- Map],
-    map_to_binary(Map2, short).
+    map_to_binary(Map2, short);
+to_binary({custom, _Name}, Binary) ->
+    Binary.
 
 -spec encode(Value | TypedValue, Size) -> Binary when
       Value :: type() | null,
