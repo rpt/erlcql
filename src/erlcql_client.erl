@@ -228,14 +228,19 @@ ready({Ref, {prepare, QueryString}}, {From, _}, State) ->
     send(Prepare, {Ref, From}, State);
 ready({Ref, {prepare, QueryString, Name}}, {From, _},
       #state{prepared_ets = PreparedETS} = State) ->
-    Prepare = erlcql_encode:prepare(QueryString),
-    Fun = fun({ok, QueryId} = Response) ->
-                  true = ets:insert(PreparedETS, {Name, QueryId}),
-                  Response;
-             ({error, _} = Response) ->
-                  Response
-          end,
-    send(Prepare, {Ref, From, Fun}, State);
+    case ets:lookup(PreparedETS, Name) of
+        [{Name, QueryId}] ->
+            {reply, {ok, QueryId}, ready, State};
+        [] ->
+            Prepare = erlcql_encode:prepare(QueryString),
+            Fun = fun({ok, QueryId} = Response) ->
+                          true = ets:insert(PreparedETS, {Name, QueryId}),
+                          Response;
+                     ({error, _} = Response) ->
+                          Response
+                  end,
+            send(Prepare, {Ref, From, Fun}, State)
+    end;
 ready({Ref, {execute, QueryId, Values, Consistency}},
       {From, _}, State) when is_binary(QueryId) ->
     Execute = erlcql_encode:execute(QueryId, Values, Consistency),
