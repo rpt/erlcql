@@ -155,7 +155,7 @@ to_binary({map, KeyType, ValueType}, Map) ->
       Size :: int | short,
       Binary :: iodata().
 encode(null, _) ->
-    <<-1:64/signed>>;
+    <<-1:32/signed>>;
 encode({Type, Value}, Size) ->
     encode(to_binary(Type, Value), Size);
 encode(Value, int) ->
