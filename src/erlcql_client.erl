@@ -27,7 +27,7 @@
 -export([start_link/1]).
 -export(['query'/3, async_query/3,
          execute/4, async_execute/4]).
--export([prepare/2, prepare/3, prepare/4,
+-export([prepare/2, prepare/3,
          options/1,
          register/2]).
 -export([await/1,
@@ -106,12 +106,7 @@ prepare(Pid, QueryString) ->
 
 -spec prepare(pid(), iodata(), atom()) -> ok | {error, Reason :: term()}.
 prepare(Pid, QueryString, Name) ->
-    prepare(Pid, QueryString, Name, undefined).
-
--spec prepare(pid(), iodata(), atom(), [option()]) ->
-          ok | {error, Reason :: term()}.
-prepare(Pid, QueryString, Name, Types) ->
-    async_call(Pid, {prepare, QueryString, Name, Types}).
+    async_call(Pid, {prepare, QueryString, Name}).
 
 -spec execute(pid(), erlcql:uuid() | atom(), values(), consistency()) ->
           result() | {error, Reason :: term()}.
@@ -245,10 +240,10 @@ ready({Ref, {'query', QueryString, Consistency}}, {From, _}, State) ->
 ready({Ref, {prepare, QueryString}}, {From, _}, State) ->
     Prepare = erlcql_encode:prepare(QueryString),
     send(Prepare, {Ref, From}, State);
-ready({Ref, {prepare, QueryString, Name, Types}}, {From, _},
+ready({Ref, {prepare, QueryString, Name}}, {From, _},
       #state{prepared_ets = PreparedETS} = State) ->
     Prepare = erlcql_encode:prepare(QueryString),
-    Fun = fun({ok, QueryId} = Response) ->
+    Fun = fun({ok, QueryId, Types} = Response) ->
                   true = ets:insert(PreparedETS, {Name, QueryId, Types}),
                   Response;
              ({error, _} = Response) ->
@@ -354,13 +349,6 @@ apply_prepare(_Pid, []) ->
     {ok, void};
 apply_prepare(Pid, [{Name, Query} | Queries]) ->
     case prepare(Pid, Query, Name) of
-        {ok, _} ->
-            apply_prepare(Pid, Queries);
-        {error, _Reason} ->
-            {error, prepare_failed}
-    end;
-apply_prepare(Pid, [{Name, Query, Types} | Queries]) ->
-    case prepare(Pid, Query, Name, Types) of
         {ok, _} ->
             apply_prepare(Pid, Queries);
         {error, _Reason} ->

@@ -393,9 +393,10 @@ set_keyspace(<<Length:?SHORT, Keyspace:Length/binary>>) ->
 %% Result: Prepared
 
 -spec prepared(binary()) -> prepared().
-prepared(<<Length:?SHORT, QueryId:Length/binary, _Metadata/binary>>) ->
-    %% {ColumnCount, ColumnSpecs, <<>>} = metadata(Metadata),
-    {ok, QueryId}.
+prepared(<<Length:?SHORT, QueryId:Length/binary, Metadata/binary>>) ->
+    {_ColumnCount, ColumnSpecs, <<>>} = metadata(Metadata),
+    {_, ColumnTypes} = lists:unzip(ColumnSpecs),
+    {ok, QueryId, ColumnTypes}.
 
 %% Result: Schema change
 
