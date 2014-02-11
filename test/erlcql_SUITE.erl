@@ -3,6 +3,7 @@
 -compile(export_all).
 
 -include_lib("common_test/include/ct.hrl").
+-include_lib("proper/include/proper.hrl").
 
 -define(OPTS, [{cql_version, <<"3.0.0">>}]).
 -define(KEYSPACE, <<"erlcql_tests">>).
@@ -15,6 +16,9 @@
 -define(CREATE_TABLE, <<"CREATE TABLE IF NOT EXISTS t ",
                         "(k int PRIMARY KEY, v text)">>).
 -define(DROP_TABLE, <<"DROP TABLE IF EXISTS t">>).
+
+-define(PROPTEST(A), true = proper:quickcheck(A())).
+-define(PROPTEST(A, Args), true = proper:quickcheck(A(Args), {numtests, 1000})).
 
 -import(erlcql, [q/2, q/3]).
 
