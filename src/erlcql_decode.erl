@@ -79,7 +79,7 @@ run_parser(#parser{buffer = Buffer} = Parser, Responses, Compression) ->
           {ok, Stream :: integer(), Response :: response(), Rest :: binary()} |
           {error, Reason :: term()}.
 decode(<<?RESPONSE:1, ?VERSION:7, _Flags:7, Decompress:1,
-         Stream:?BYTE, Opcode:8, Length:32, Data:Length/binary,
+         Stream:8/signed, Opcode:8, Length:32, Data:Length/binary,
          Rest/binary>>, Compression) ->
     Data2 = maybe_decompress(Decompress, Compression, Data),
     Response = case opcode(Opcode) of
@@ -455,13 +455,12 @@ schema_change_type(<<"UPDATED">>) -> updated;
 schema_change_type(<<"DROPPED">>) -> dropped.
 
 -spec inet(binary()) -> inet().
-inet(<<Size:?BYTE, Data/binary>>) ->
+inet(<<Size:8, Data/binary>>) ->
     inet(Size, Data).
 
 -spec inet(4 | 16, binary()) -> inet().
-inet(4, <<A:?BYTE, B:?BYTE, C:?BYTE, D:?BYTE, Port:?INT>>) ->
+inet(4, <<A:8, B:8, C:8, D:8, Port:?INT>>) ->
     {{A, B, C, D}, Port};
-inet(16, <<A:?BYTE2, B:?BYTE2, C:?BYTE2, D:?BYTE2,
-           E:?BYTE2, F:?BYTE2, G:?BYTE2, H:?BYTE2, Port:?INT>>) ->
+inet(16, <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16, Port:?INT>>) ->
     {{A, B, C, D, E, F, G, H}, Port}.
 

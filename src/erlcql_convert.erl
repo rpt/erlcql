@@ -40,8 +40,7 @@ from_binary(boolean, <<_:7, Int:1>>) ->
     Int == 1;
 from_binary(counter, Value) ->
     from_binary(bigint, Value);
-from_binary(decimal, <<Scale:32, Binary/binary>>) ->
-    %% FIXME: Not sure if we want to do this conversion...
+from_binary(decimal, <<Scale:32/signed, Binary/binary>>) ->
     Size = byte_size(Binary) * 8,
     <<Value:Size/signed>> = Binary,
     Value * math:pow(10, -Scale);
@@ -49,12 +48,11 @@ from_binary(double, <<Float:64/float>>) ->
     Float;
 from_binary(float, <<Float:32/float>>) ->
     Float;
-from_binary(inet, <<A:?BYTE, B:?BYTE, C:?BYTE, D:?BYTE>>) ->
+from_binary(inet, <<A:8, B:8, C:8, D:8>>) ->
     {A, B, C, D};
-from_binary(inet, <<A:?BYTE2, B:?BYTE2, C:?BYTE2, D:?BYTE2,
-                    E:?BYTE2, F:?BYTE2, G:?BYTE2, H:?BYTE2>>) ->
+from_binary(inet, <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>) ->
     {A, B, C, D, E, F, G, H};
-from_binary(int, <<Int:32/signed>>) ->
+from_binary(int, <<Int:?INT>>) ->
     Int;
 from_binary(text, Binary) ->
     Binary;
@@ -67,7 +65,7 @@ from_binary(uuid, <<_:128>> = Uuid) ->
 from_binary(varchar, Binary) ->
     Binary;
 from_binary(varint, Value) ->
-    binary:decode_unsigned(Value);
+    decode_signed(Value);
 from_binary({list, Type}, <<N:?SHORT, Data/binary>>) ->
     list_from_binary(N, Type, Data, []);
 from_binary({set, Type}, Value) ->
@@ -102,6 +100,12 @@ uuid_to_string(<<U0:32, U1:16, U2:16, U3:16, U4:48>>) ->
     Format = "~8.16.0b-~4.16.0b-~4.16.0b-~4.16.0b-~12.16.0b",
     iolist_to_binary(io_lib:format(Format, [U0, U1, U2, U3, U4])).
 
+-spec decode_signed(binary()) -> integer().
+decode_signed(Binary) ->
+    Size = byte_size(Binary) * 8,
+    <<Int:Size/signed>> = Binary,
+    Int.
+
 %% To binary ------------------------------------------------------------------
 
 -spec to_binary(Values) -> Binaries when
@@ -122,7 +126,7 @@ to_binary(_, null) ->
 to_binary(ascii, Binary) ->
     Binary;
 to_binary(bigint, Int) ->
-    <<Int:64/signed>>;
+    <<Int:64>>;
 to_binary(blob, Binary) ->
     Binary;
 to_binary(boolean, true) ->
@@ -131,16 +135,16 @@ to_binary(boolean, false) ->
     <<0>>;
 to_binary(counter, Int) ->
     to_binary(bigint, Int);
-%% TODO: to_binary(decimal, Float) ->
+to_binary(decimal, Float) ->
+    float_to_decimal(Float, 0);
 to_binary(double, Float) ->
     <<Float:64/float>>;
 to_binary(float, Float) ->
     <<Float:32/float>>;
 to_binary(inet, {A, B, C, D}) ->
-    <<A:?BYTE, B:?BYTE, C:?BYTE, D:?BYTE>>;
+    <<A:8, B:8, C:8, D:8>>;
 to_binary(inet, {A, B, C, D, E, F, G, H}) ->
-    <<A:?BYTE2, B:?BYTE2, C:?BYTE2, D:?BYTE2,
-      E:?BYTE2, F:?BYTE2, G:?BYTE2, H:?BYTE2>>;
+    <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>;
 to_binary(int, Int) ->
     ?int(Int);
 to_binary(text, Binary) ->
@@ -154,7 +158,7 @@ to_binary(uuid, UUID) ->
 to_binary(varchar, Binary) ->
     Binary;
 to_binary(varint, Int) ->
-    binary:encode_unsigned(Int);
+    encode_signed(Int, 1);
 to_binary({list, Type}, List) ->
     List2 = [{Type, X} || X <- List],
     list_to_binary2(List2, short);
@@ -173,7 +177,7 @@ to_binary({custom, _Name}, Binary) ->
       Size :: int | short,
       Binary :: iodata().
 encode(null, _) ->
-    <<-1:32/signed>>;
+    <<-1:32>>;
 encode({Type, Value}, Size) ->
     encode(to_binary(Type, Value), Size);
 encode(Value, int) ->
@@ -220,3 +224,31 @@ uuid_to_binary(UUID) ->
       Integer :: integer().
 part_to_integer(Binary) ->
     list_to_integer(bitstring_to_list(Binary), 16).
+
+-spec float_to_decimal(float(), integer()) -> binary().
+float_to_decimal(Float, Scale) ->
+    Round = round(Float),
+    if
+        Round == Float ->
+            case Round rem 10 of
+                0 ->
+                    float_to_decimal(Round div 10, Scale - 1);
+                _ ->
+                    Bin = encode_signed(Round, 1),
+                    <<Scale:32, Bin/binary>>
+            end;
+        true ->
+            float_to_decimal(Float * 10, Scale + 1)
+    end.
+
+-spec encode_signed(integer(), integer()) -> binary().
+encode_signed(Int, Bytes) ->
+    Min = - 1 bsl (8 * Bytes - 1),
+    Max = 1 bsl (8 * Bytes - 1) - 1,
+    if
+        Int >= Min andalso Int =< Max ->
+            Size = Bytes * 8,
+            <<Int:Size>>;
+        true ->
+            encode_signed(Int, Bytes + 1)
+    end.
