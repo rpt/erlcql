@@ -233,7 +233,7 @@ uuid_to_binary(UUID) ->
 part_to_integer(Binary) ->
     list_to_integer(bitstring_to_list(Binary), 16).
 
--spec float_to_decimal(float(), integer()) -> binary().
+-spec float_to_decimal(float() | integer(), integer()) -> binary().
 float_to_decimal(Float, Scale) ->
     Round = round(Float),
     if

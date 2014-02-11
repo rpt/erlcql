@@ -77,7 +77,7 @@ prepare(QueryString) ->
     {prepare, [long_string(QueryString)]}.
 
 %% @doc Encodes the execute request message body.
--spec execute(binary(), [binary()], consistency()) -> {execute, iolist()}.
+-spec execute(binary(), values(), consistency()) -> {execute, iolist()}.
 execute(QueryId, Values, Consistency) ->
     BinaryValues = erlcql_convert:to_binary(Values),
     {execute, [short_bytes(QueryId), BinaryValues,
