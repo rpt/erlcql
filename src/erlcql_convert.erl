@@ -22,7 +22,7 @@
 %% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
 -module(erlcql_convert).
 
--export([from_binary/2, from_null/2,
+-export([from_binary/2, from_null/1,
          to_binary/1, to_binary/2]).
 
 -include("erlcql.hrl").
