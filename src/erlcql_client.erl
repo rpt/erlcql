@@ -349,7 +349,7 @@ apply_prepare(_Pid, []) ->
     {ok, void};
 apply_prepare(Pid, [{Name, Query} | Queries]) ->
     case prepare(Pid, Query, Name) of
-        {ok, _} ->
+        {ok, _, _} ->
             apply_prepare(Pid, Queries);
         {error, _Reason} ->
             {error, prepare_failed}
