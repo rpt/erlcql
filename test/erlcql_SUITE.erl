@@ -109,7 +109,7 @@ groups() ->
         [list_of_ints,
          list_of_varints,
          set_of_floats,
-         map_of_strings_to_stings]}]},
+         map_of_strings_to_boolean]}]},
      {data_manipulation, [],
       [insert]},
      {client, [],
@@ -140,19 +140,48 @@ drop_keyspace(Config) ->
 
 ascii(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, ascii, <<"'string'">>, <<"string">>).
+    create_type_table(Pid, ascii),
+    ?PROPTEST(prop_ascii, Pid).
+
+prop_ascii(Pid) ->
+    ?FORALL(S, ascii_string(),
+            begin
+                E = escape_string(S),
+                B2 = [$', E, $'],
+                insert_type(Pid, B2),
+                list_to_binary(S) == get_value(Pid, ascii)
+            end).
 
 bigint(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, bigint, <<"12345678">>, 12345678).
+    create_type_table(Pid, bigint),
+    ?PROPTEST(prop_bigint, Pid).
+
+prop_bigint(Pid) ->
+    ?FORALL(I, union([integer(), integer(-(1 bsl 63), (1 bsl 63) - 1)]),
+            begin
+                S = integer_to_binary(I),
+                insert_type(Pid, S),
+                I == get_value(Pid, bigint)
+            end).
 
 boolean(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, boolean, <<"true">>, true).
+    check_type(Pid, boolean, <<"true">>, true),
+    check_type(Pid, boolean, <<"false">>, false).
 
 blob(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, blob, <<"0x65726C63716C">>, <<"erlcql">>).
+    create_type_table(Pid, blob),
+    ?PROPTEST(prop_blob, Pid).
+
+prop_blob(Pid) ->
+    ?FORALL(B, binary(),
+            begin
+                Blob = cql_blob(B),
+                insert_type(Pid, Blob),
+                B == get_value(Pid, blob)
+            end).
 
 counter(Config) ->
     Pid = get_pid(Config),
@@ -164,27 +193,87 @@ counter(Config) ->
 
 decimal(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, decimal, <<"1234.5678">>, 1234.5678).
+    create_type_table(Pid, decimal),
+    ?PROPTEST(prop_decimal, Pid).
+
+prop_decimal(Pid) ->
+    ?FORALL(F, float(),
+            begin
+                S = float_to_binary(F),
+                insert_type(Pid, S),
+                V = get_value(Pid, decimal),
+                %% NB: This comparison is tuned for these tests only
+                true == (abs(F - V) < 1.0e-12)
+            end).
 
 double(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, double, <<"1.2345678">>, 1.2345678).
+    create_type_table(Pid, double),
+    ?PROPTEST(prop_double, Pid).
+
+prop_double(Pid) ->
+    ?FORALL(F, float(),
+            begin
+                S = float_to_binary(F),
+                insert_type(Pid, S),
+                V = get_value(Pid, double),
+                %% NB: This comparison is tuned for these tests only
+                true == (abs(F - V) < 1.0e-12)
+            end).
 
 float(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, float, <<"0.15625">>, 0.15625).
+    create_type_table(Pid, float),
+    ?PROPTEST(prop_float, Pid).
+
+prop_float(Pid) ->
+    ?FORALL(F, float(),
+            begin
+                S = float_to_binary(F),
+                insert_type(Pid, S),
+                V = get_value(Pid, float),
+                %% NB: This comparison is tuned for these tests only
+                true == (abs(F - V) < 1.0e-4)
+            end).
 
 inet(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, inet, <<"'10.0.2.12'">>, {10, 0, 2, 12}).
+    create_type_table(Pid, inet),
+    ?PROPTEST(prop_inet, Pid).
+
+prop_inet(Pid) ->
+    ?FORALL(A, ip_address(),
+            begin
+                S = [$', inet:ntoa(A), $'],
+                insert_type(Pid, S),
+                A =:= get_value(Pid, inet)
+            end).
 
 int(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, int, <<"1234">>, 1234).
+    create_type_table(Pid, int),
+    ?PROPTEST(prop_int, Pid).
+
+prop_int(Pid) ->
+    ?FORALL(I, union([integer(), integer(-(1 bsl 31), (1 bsl 31) - 1)]),
+            begin
+                S = integer_to_binary(I),
+                insert_type(Pid, S),
+                I == get_value(Pid, int)
+            end).
 
 text(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, text, <<"'string'">>, <<"string">>).
+    create_type_table(Pid, text),
+    ?PROPTEST(prop_text, Pid).
+
+prop_text(Pid) ->
+    ?FORALL(B, utf8_bin(),
+            begin
+                Text = [$', B, $'],
+                insert_type(Pid, Text),
+                B == get_value(Pid, text)
+            end).
 
 timestamp(Config) ->
     Pid = get_pid(Config),
@@ -202,31 +291,83 @@ uuid(Config) ->
 
 varchar(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, varchar, <<"'string'">>, <<"string">>).
+    create_type_table(Pid, varchar),
+    ?PROPTEST(prop_varchar, Pid).
+
+prop_varchar(Pid) ->
+    ?FORALL(B, utf8_bin(),
+            begin
+                Varchar = [$', B, $'],
+                insert_type(Pid, Varchar),
+                B == get_value(Pid, varchar)
+            end).
 
 varint(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, varint, <<"32800">>, 32800).
+    create_type_table(Pid, varint),
+    ?PROPTEST(prop_varint, Pid).
+
+prop_varint(Pid) ->
+    ?FORALL(I, union([integer(), integer(-(1 bsl 63), (1 bsl 63) - 1)]),
+            begin
+                S = integer_to_binary(I),
+                insert_type(Pid, S),
+                I == get_value(Pid, varint)
+            end).
 
 list_of_ints(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, <<"list<int>">>, <<"[1, 2, 3]">>, [1, 2, 3]).
+    create_type_table(Pid, <<"list<int>">>),
+    ?PROPTEST(prop_list_of_ints, Pid).
+
+prop_list_of_ints(Pid) ->
+    ?FORALL(L, list(integer()),
+            begin
+                SL = [integer_to_list(X) || X <- L],
+                V = iolist_to_binary([$[, string:join(SL, ", "), $]]),
+                insert_type(Pid, V),
+                L == get_value(Pid, <<"list<int>">>)
+            end).
 
 list_of_varints(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, <<"list<varint>">>, <<"[1, 2, 3]">>, [1, 2, 3]).
+    create_type_table(Pid, <<"list<varint>">>),
+    ?PROPTEST(prop_list_of_varints, Pid).
+
+prop_list_of_varints(Pid) ->
+    ?FORALL(L, list(integer()),
+            begin
+                SL = [integer_to_list(X) || X <- L],
+                V = iolist_to_binary([$[, string:join(SL, ", "), $]]),
+                insert_type(Pid, V),
+                L == get_value(Pid, <<"list<varint>">>)
+            end).
 
 set_of_floats(Config) ->
     Pid = get_pid(Config),
     check_type(Pid, <<"set<double>">>, <<"{0.1, 1.2, 2.3}">>, [0.1, 1.2, 2.3]).
 
-map_of_strings_to_stings(Config) ->
+map_of_strings_to_boolean(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, <<"map<varchar, boolean>">>,
-               <<"{'Poland': true, 'USA': false}">>,
-               [{<<"Poland">>, true}, {<<"USA">>, false}]).
+    create_type_table(Pid, <<"map<varchar, boolean>">>),
+    ?PROPTEST(prop_map_of_strings_to_boolean, Pid).
 
-%% Data tests
+b2l(false) ->
+    "false";
+b2l(true) ->
+    "true".
+
+prop_map_of_strings_to_boolean(Pid) ->
+    ?FORALL(L, list({utf8_bin(), boolean()}),
+            begin
+                ML = [[$', S, "': ", b2l(B)] || {S, B} <- L],
+                V = iolist_to_binary([${, string:join(ML, ", "), $}]),
+                ct:log("L: ~p", [L]),
+                insert_type(Pid, V),
+                Z = get_value(Pid, <<"map<varchar, boolean>">>),
+                ct:log("Z: ~p", [Z]),
+                [] == Z -- L
+            end).
 
 insert(Config) ->
     Pid = get_pid(Config),
@@ -303,3 +444,40 @@ clean_type_table(TestCase, Config) ->
         false ->
             ok
     end.
+
+ascii_char() ->
+    ?LET(C, integer(0, 127), C).
+
+ascii_string() ->
+    ?LET(L, list(ascii_char()), L).
+
+cql_blob(B) ->
+    B2 = bstr:hexencode(B),
+    <<"0x", B2/binary>>.
+
+ip_address() ->
+    {integer(0, 255), integer(0, 255), integer(0, 255), integer(0, 255)}.
+
+unicode_char() ->
+    ?SUCHTHAT(C, char(), C < 16#D800 orelse C > 16#DFFF).
+
+utf8_bin() ->
+    ?LET(S, list(unicode_char()),
+         begin
+             S2 = escape_string(S),
+             unicode:characters_to_binary(S2, unicode, utf8)
+         end).
+
+escape_string(S) ->
+    R = lists:foldl(fun($', Acc) ->
+                            [$', $' | Acc];
+                       (X, Acc) ->
+                            [X | Acc]
+                    end,
+                    [],
+                    S),
+    lists:reverse(R).
+
+cql_int_list(L) ->
+    SL = [integer_to_list(X) || X <- L],
+    [$[, SL, $]].
