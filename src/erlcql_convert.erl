@@ -81,7 +81,9 @@ from_null({list, _}) ->
 from_null({set, _}) ->
     [];
 from_null({map, _, _}) ->
-    [].
+    [];
+from_null(_) ->
+    null.
 
 -spec list_from_binary(integer(), option_id(),
                        binary(), erlcql_list()) -> erlcql_list().
