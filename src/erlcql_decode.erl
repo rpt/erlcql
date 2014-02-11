@@ -376,8 +376,9 @@ rows(M, N, Types, Data, Rows) ->
           {Values :: [binary()], Rest :: binary()}.
 row_values(0, [], Rest, Values) ->
     {lists:reverse(Values), Rest};
-row_values(N, [_ | Types], <<-1:?INT, Rest/binary>>, Values) ->
-    row_values(N - 1, Types, Rest, [null | Values]);
+row_values(N, [Type | Types], <<-1:?INT, Rest/binary>>, Values) ->
+    Value = erlcql_convert:from_null(Type),
+    row_values(N - 1, Types, Rest, [Value | Values]);
 row_values(N, [Type | Types], <<Length:?INT, Value:Length/binary,
                                 Rest/binary>>, Values) ->
     Value2 = erlcql_convert:from_binary(Type, Value),

@@ -22,7 +22,7 @@
 %% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
 -module(erlcql_convert).
 
--export([from_binary/2,
+-export([from_binary/2, from_null/2,
          to_binary/1, to_binary/2]).
 
 -include("erlcql.hrl").
@@ -74,6 +74,14 @@ from_binary({map, KeyType, ValueType}, <<N:?SHORT, Data/binary>>) ->
     map_from_binary(N, {KeyType, ValueType}, Data, []);
 from_binary({custom, _Name}, Binary) ->
     Binary.
+
+-spec from_null(option()) -> collection_type().
+from_null({list, _}) ->
+    [];
+from_null({set, _}) ->
+    [];
+from_null({map, _, _}) ->
+    [].
 
 -spec list_from_binary(integer(), option_id(),
                        binary(), erlcql_list()) -> erlcql_list().
