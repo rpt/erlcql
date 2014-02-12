@@ -31,6 +31,9 @@
 -define(INT, 4/big-signed-integer-unit:8).
 -define(SHORT, 2/big-unsigned-integer-unit:8).
 
+-define(int(X), <<X:?INT>>).
+-define(short(X), <<X:?SHORT>>).
+
 %% Parser
 -record(parser, {
           buffer = <<>> :: binary()
@@ -42,6 +45,10 @@
 %%-----------------------------------------------------------------------------
 %% Types
 %%-----------------------------------------------------------------------------
+
+-type proplist() :: proplists:proplist().
+-type socket() :: inet:socket().
+-type ets() :: ets:tid().
 
 -type request() :: {Opcode :: request_opcode(), Data :: iolist()}.
 -type request_opcode() :: startup
@@ -177,6 +184,8 @@
 
 -type type() :: native_type()
               | collection_type().
+
+-type values() :: [binary() | {option(), type()}].
 
 %%-----------------------------------------------------------------------------
 %% Logging macros

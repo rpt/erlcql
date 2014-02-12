@@ -1,16 +1,16 @@
-.PHONY: all compile get-deps dialyze wait test console clean
+.PHONY: all deps compile dialyze wait test console clean
 
 APPS = dialyzer.apps
 PLT = apps.plt
 TIMEOUT = 15
 
-all: get-deps compile
+all: deps compile
+
+deps:
+	@ rebar get-deps
 
 compile:
 	@ rebar compile
-
-get-deps:
-	@ rebar get-deps
 
 dialyze: compile $(PLT)
 	@ echo "==> (dialyze)"

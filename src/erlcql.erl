@@ -42,7 +42,8 @@
               event_type/0,
               event_fun/0,
               query_ref/0]).
--export_type([type/0,
+-export_type([values/0,
+              type/0,
               native_type/0,
               uuid/0,
               collection_type/0,
@@ -77,12 +78,12 @@ q(Pid, Query) ->
 q(Pid, Query, Consistency) ->
     erlcql_client:'query'(Pid, Query, Consistency).
 
--spec e(pid(), binary(), [binary()]) ->
+-spec e(pid(), binary(), values()) ->
           result() | {error, Reason :: term()}.
 e(Pid, QueryId, Values) ->
     e(Pid, QueryId, Values, default(consistency)).
 
--spec e(pid(), binary(), [binary()], consistency()) ->
+-spec e(pid(), binary(), values(), consistency()) ->
           result() | {error, Reason :: term()}.
 e(Pid, QueryId, Values, Consistency) ->
     erlcql_client:execute(Pid, QueryId, Values, Consistency).
@@ -92,9 +93,8 @@ default(host) -> "localhost";
 default(port) -> 9042;
 default(username) -> <<"cassandra">>;
 default(password) -> <<"cassandra">>;
-default(cql_version) -> <<"3.1.1">>;
+default(cql_version) -> <<"3.1.2">>;
 default(compression) -> false;
 default(tracing) -> false;
-default(use) -> undefined;
 default(event_handler) -> self();
 default(consistency) -> quorum.

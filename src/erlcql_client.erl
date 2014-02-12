@@ -27,7 +27,7 @@
 -export([start_link/1]).
 -export(['query'/3, async_query/3,
          execute/4, async_execute/4]).
--export([prepare/2, prepare/3,
+-export([prepare/2, prepare/3, prepare/4,
          options/1,
          register/2]).
 -export([await/1,
@@ -48,19 +48,17 @@
 -include("erlcql.hrl").
 
 -record(state, {
-          parent :: pid(),
-          socket :: port(),
-          async_ets :: ets:tid(),
-          prepared_ets :: ets:tid(),
+          async_ets :: ets(),
           credentials :: {bitstring(), bitstring()},
+          event_fun :: event_fun(),
           flags :: {atom(), boolean()},
-          streams = lists:seq(1, 127) :: [integer()],
+          parent :: pid(),
           parser :: parser(),
-          event_fun :: event_fun()
+          prepared_ets :: ets(),
+          socket :: socket(),
+          streams = lists:seq(1, 127) :: [integer()]
          }).
 -type state() :: #state{}.
-
--type proplist() :: proplists:proplist().
 
 -define(TCP_OPTS, [binary, {active, once}]).
 -define(ASYNC_ETS_NAME, erlcql_async).
@@ -76,15 +74,18 @@
 %% API
 %%-----------------------------------------------------------------------------
 
--spec start_link(proplist()) ->
-          {ok, pid()} | ignore | {error, Reason :: term()}.
 start_link(Opts) ->
     Opts2 = [{parent, self()} | Opts],
     EventFun = event_fun(get_env_opt(event_handler, Opts)),
     Opts3 = [{event_fun, EventFun} | Opts2],
     case gen_fsm:start_link(?MODULE, proplists:unfold(Opts3), []) of
         {ok, Pid} ->
-            wait_until_ready(Pid, Opts);
+            case wait_until_ready(Pid, Opts) of
+                ready ->
+                    {ok, Pid};
+                {error, _Reason} = Error ->
+                    Error
+            end;
         {error, _Reason} = Error ->
             Error
     end.
@@ -105,14 +106,19 @@ prepare(Pid, QueryString) ->
 
 -spec prepare(pid(), iodata(), atom()) -> ok | {error, Reason :: term()}.
 prepare(Pid, QueryString, Name) ->
-    async_call(Pid, {prepare, QueryString, Name}).
+    prepare(Pid, QueryString, Name, undefined).
 
--spec execute(pid(), erlcql:uuid() | atom(), [binary()], consistency()) ->
+-spec prepare(pid(), iodata(), atom(), [option()]) ->
+          ok | {error, Reason :: term()}.
+prepare(Pid, QueryString, Name, Types) ->
+    async_call(Pid, {prepare, QueryString, Name, Types}).
+
+-spec execute(pid(), erlcql:uuid() | atom(), values(), consistency()) ->
           result() | {error, Reason :: term()}.
 execute(Pid, QueryId, Values, Consistency) ->
     async_call(Pid, {execute, QueryId, Values, Consistency}).
 
--spec async_execute(pid(), binary(), [binary()], consistency()) ->
+-spec async_execute(pid(), binary(), values(), consistency()) ->
           {ok, QueryRef :: erlcql:query_ref()} | {error, Reason :: term()}.
 async_execute(Pid, QueryId, Values, Consistency) ->
     cast(Pid, {execute, QueryId, Values, Consistency}).
@@ -151,35 +157,48 @@ init(Opts) ->
     Port = get_env_opt(port, Opts),
     case gen_tcp:connect(Host, Port, ?TCP_OPTS) of
         {ok, Socket} ->
-            AsyncETS = ets:new(?ASYNC_ETS_NAME, ?ASYNC_ETS_OPTS),
-            PreparedETS = maybe_create_prepared_ets(Opts),
-            Compression = get_env_opt(compression, Opts),
-            Tracing = get_env_opt(tracing, Opts),
-            Flags = {Compression, Tracing},
-            CQLVersion = get_env_opt(cql_version, Opts),
-            Username = get_env_opt(username, Opts),
-            Password = get_env_opt(password, Opts),
-            Credentials = {Username, Password},
-            Parser = erlcql_decode:new_parser(),
-            Parent = get_opt(parent, Opts),
-            EventFun = get_opt(event_fun, Opts),
-
-            Startup = erlcql_encode:startup(Compression, CQLVersion),
-            Frame = erlcql_encode:frame(Startup, {false, Tracing}, 0),
-            ok = gen_tcp:send(Socket, Frame),
-
-            {ok, startup, #state{parent = Parent,
-                                 socket = Socket,
-                                 flags = Flags,
-                                 credentials = Credentials,
-                                 async_ets = AsyncETS,
-                                 prepared_ets = PreparedETS,
-                                 parser = Parser,
-                                 event_fun = EventFun}};
+            State = init_state(Opts, Socket),
+            ok = send_startup(State, Opts),
+            {ok, startup, State};
         {error, Reason} ->
             ?ERROR("Cannot connect to Cassandra: ~s", [Reason]),
             {stop, Reason}
     end.
+
+-spec init_state(Opts, Socket) -> State when
+      Opts :: proplist(),
+      Socket :: socket(),
+      State :: state().
+init_state(Opts, Socket) ->
+    AsyncETS = ets:new(?ASYNC_ETS_NAME, ?ASYNC_ETS_OPTS),
+    Username = get_env_opt(username, Opts),
+    Password = get_env_opt(password, Opts),
+    Credentials = {Username, Password},
+    EventFun = get_opt(event_fun, Opts),
+    Compression = get_env_opt(compression, Opts),
+    Tracing = get_env_opt(tracing, Opts),
+    Flags = {Compression, Tracing},
+    Parent = get_opt(parent, Opts),
+    Parser = erlcql_decode:new_parser(),
+    PreparedETS = maybe_create_prepared_ets(Opts),
+    #state{async_ets = AsyncETS,
+           credentials = Credentials,
+           event_fun = EventFun,
+           flags = Flags,
+           parent = Parent,
+           parser = Parser,
+           prepared_ets = PreparedETS,
+           socket = Socket}.
+
+-spec send_startup(State, Opts) -> ok when
+      State :: state(),
+      Opts :: proplist().
+send_startup(#state{flags = {Compression, Tracing},
+                    socket = Socket}, Opts) ->
+    CQLVersion = get_env_opt(cql_version, Opts),
+    Startup = erlcql_encode:startup(Compression, CQLVersion),
+    Frame = erlcql_encode:frame(Startup, {false, Tracing}, 0),
+    gen_tcp:send(Socket, Frame).
 
 handle_event({timeout, Stream}, StateName,
              #state{async_ets = AsyncETS,
@@ -226,11 +245,11 @@ ready({Ref, {'query', QueryString, Consistency}}, {From, _}, State) ->
 ready({Ref, {prepare, QueryString}}, {From, _}, State) ->
     Prepare = erlcql_encode:prepare(QueryString),
     send(Prepare, {Ref, From}, State);
-ready({Ref, {prepare, QueryString, Name}}, {From, _},
+ready({Ref, {prepare, QueryString, Name, Types}}, {From, _},
       #state{prepared_ets = PreparedETS} = State) ->
     Prepare = erlcql_encode:prepare(QueryString),
     Fun = fun({ok, QueryId} = Response) ->
-                  true = ets:insert(PreparedETS, {Name, QueryId}),
+                  true = ets:insert(PreparedETS, {Name, QueryId, Types}),
                   Response;
              ({error, _} = Response) ->
                   Response
@@ -243,8 +262,12 @@ ready({Ref, {execute, QueryId, Values, Consistency}},
 ready({Ref, {execute, QueryName, Values, Consistency}}, {From, _},
       #state{prepared_ets = PreparedETS} = State) when is_atom(QueryName) ->
     case ets:lookup(PreparedETS, QueryName) of
-        [{QueryName, QueryId}] ->
+        [{QueryName, QueryId, undefined}] ->
             Execute = erlcql_encode:execute(QueryId, Values, Consistency),
+            send(Execute, {Ref, From}, State);
+        [{QueryName, QueryId, Types}] ->
+            TypedValues = lists:zip(Types, Values),
+            Execute = erlcql_encode:execute(QueryId, TypedValues, Consistency),
             send(Execute, {Ref, From}, State);
         [] ->
             {reply, {error, invalid_query_name}, ready, State}
@@ -285,7 +308,7 @@ terminate(_Reason, _StateName, _State) ->
 %% Internal functions
 %%-----------------------------------------------------------------------------
 
--spec maybe_create_prepared_ets(proplist()) -> ets:tid().
+-spec maybe_create_prepared_ets(proplist()) -> ets().
 maybe_create_prepared_ets(Opts) ->
    case get_opt(prepared_statements_ets_tid, Opts) of
        undefined ->
@@ -300,33 +323,72 @@ event_fun(Fun) when is_function(Fun) ->
 event_fun(Pid) when is_pid(Pid) ->
     fun(Event) -> Pid ! Event end.
 
--spec wait_until_ready(pid(), proplist()) ->
-          {ok, pid()} | {error, timeout | bad_keyspace}.
+-spec wait_until_ready(pid(), proplist()) -> ready | {error, atom()}.
 wait_until_ready(Pid, Opts) ->
     receive
         ready ->
-            Keyspace = get_env_opt(use, Opts),
-            wait_for_use(Keyspace, Pid)
+            init_env(Pid, Opts)
     after
         ?TIMEOUT ->
             {error, timeout}
     end.
 
--spec wait_for_use(undefined | bitstring(), pid()) ->
-          {ok, pid()} | {error, bad_keyspace}.
-wait_for_use(undefined, Pid) ->
-    {ok, Pid};
-wait_for_use(Keyspace, Pid) ->
-    case cast(Pid, {'query', [<<"USE ">>, Keyspace], any}) of
-        {ok, QueryRef} ->
-            case await(QueryRef) of
-                {ok, Keyspace} ->
-                    {ok, Pid};
-                {error, _Reason} ->
-                    {error, bad_keyspace}
-            end;
+-spec init_env(Pid, Opts) -> ok | {error, Reason} when
+      Pid :: pid(),
+      Opts :: proplist(),
+      Reason :: atom().
+init_env(Pid, Opts) ->
+    UseFun = fun(Keyspace) -> 'query'(Pid, [<<"USE ">>, Keyspace], any) end,
+    PrepareFun = fun(Queries) -> apply_prepare(Pid, Queries) end,
+    RegisterFun = fun(Events) -> ?MODULE:register(Pid, Events) end,
+    apply_funs([{use, UseFun, bad_keyspace},
+                {prepare, PrepareFun, prepare_failed},
+                {register, RegisterFun, register_failed}], Opts).
+
+-spec apply_prepare(Pid, Queries) -> {ok, void} | {error, Reason} when
+      Pid :: pid(),
+      Queries :: [Query],
+      Query :: {Name :: atom(), QueryString :: bitstring()},
+      Reason :: atom().
+apply_prepare(_Pid, []) ->
+    {ok, void};
+apply_prepare(Pid, [{Name, Query} | Queries]) ->
+    case prepare(Pid, Query, Name) of
+        {ok, _} ->
+            apply_prepare(Pid, Queries);
         {error, _Reason} ->
-            {error, bad_keyspace}
+            {error, prepare_failed}
+    end;
+apply_prepare(Pid, [{Name, Query, Types} | Queries]) ->
+    case prepare(Pid, Query, Name, Types) of
+        {ok, _} ->
+            apply_prepare(Pid, Queries);
+        {error, _Reason} ->
+            {error, prepare_failed}
+    end.
+
+-spec apply_funs(Funs, Opts) -> ok | {error, Reason} when
+      Funs :: [{Opt :: atom(), Fun, Reason}],
+      Fun :: fun(() -> Response),
+      Response :: erlcql:response(),
+      Opts :: proplist(),
+      Reason :: atom().
+apply_funs([], _Opts) ->
+    ready;
+apply_funs([{Key, Fun, Error} | Rest], Opts) ->
+    Value = get_opt(Key, Opts),
+    case Value of
+        undefined ->
+            apply_funs(Rest, Opts);
+        Value ->
+            case Fun(Value) of
+                {ok, _} ->
+                    apply_funs(Rest, Opts);
+                ready ->
+                    apply_funs(Rest, Opts);
+                {error, _Reason} ->
+                    {error, Error}
+            end
     end.
 
 -spec async_call(pid(), tuple() | atom()) -> response() |
