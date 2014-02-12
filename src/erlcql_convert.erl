@@ -133,6 +133,8 @@ to_binary(Values) ->
       Binary :: iodata().
 to_binary(_, null) ->
     null;
+to_binary(_, undefined) ->
+    null;
 to_binary(ascii, Binary) ->
     Binary;
 to_binary(bigint, Int) ->
