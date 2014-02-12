@@ -392,7 +392,7 @@ set_keyspace(<<Length:?SHORT, Keyspace:Length/binary>>) ->
 
 %% Result: Prepared
 
--spec prepared(binary()) -> prepared().
+-spec prepared(binary()) -> {ok, bitstring(), [option()]}.
 prepared(<<Length:?SHORT, QueryId:Length/binary, Metadata/binary>>) ->
     {_ColumnCount, ColumnSpecs, <<>>} = metadata(Metadata),
     {_, ColumnTypes} = lists:unzip(ColumnSpecs),

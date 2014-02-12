@@ -243,9 +243,9 @@ ready({Ref, {prepare, QueryString}}, {From, _}, State) ->
 ready({Ref, {prepare, QueryString, Name}}, {From, _},
       #state{prepared_ets = PreparedETS} = State) ->
     Prepare = erlcql_encode:prepare(QueryString),
-    Fun = fun({ok, QueryId, Types} = Response) ->
+    Fun = fun({ok, QueryId, Types}) ->
                   true = ets:insert(PreparedETS, {Name, QueryId, Types}),
-                  Response;
+                  {ok, QueryId};
              ({error, _} = Response) ->
                   Response
           end,
@@ -349,7 +349,7 @@ apply_prepare(_Pid, []) ->
     {ok, void};
 apply_prepare(Pid, [{Name, Query} | Queries]) ->
     case prepare(Pid, Query, Name) of
-        {ok, _, _} ->
+        {ok, _QueryId} ->
             apply_prepare(Pid, Queries);
         {error, _Reason} ->
             {error, prepare_failed}
