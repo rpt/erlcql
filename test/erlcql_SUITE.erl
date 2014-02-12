@@ -186,10 +186,19 @@ prop_blob(Pid) ->
 counter(Config) ->
     Pid = get_pid(Config),
     create_type_table(Pid, counter),
-    q(Pid, <<"UPDATE erlcql_tests.t SET v = v + 1 WHERE k = 'key'">>, one),
-    q(Pid, <<"UPDATE erlcql_tests.t SET v = v + 2 WHERE k = 'key'">>, one),
-    q(Pid, <<"UPDATE erlcql_tests.t SET v = v + 3 WHERE k = 'key'">>, one),
-    6 = get_value(Pid, counter).
+    ?PROPTEST(prop_counter, Pid).
+
+
+prop_counter(Pid) ->
+    ?FORALL(L, list(integer()),
+            begin
+                [q(Pid, ["UPDATE erlcql_tests.t SET v = v + ", integer_to_list(I), " WHERE k = 'key'"], one) ||
+                    I <- L],
+                S = lists:sum(L),
+                V = get_value(Pid, counter),
+                q(Pid, ["UPDATE erlcql_tests.t SET v = v - ", integer_to_list(V), " WHERE k = 'key'"], one),
+                S =:= V
+            end).
 
 decimal(Config) ->
     Pid = get_pid(Config),
