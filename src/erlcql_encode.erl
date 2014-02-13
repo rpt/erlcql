@@ -158,6 +158,8 @@ event_list(Events) ->
 -spec maybe_compress(compression(), iolist()) -> {0 | 1, iolist()}.
 maybe_compress(false, Payload) ->
     {0, Payload};
+maybe_compress(_Any, []) ->
+    {0, <<>>};
 maybe_compress(snappy, Payload) ->
     {ok, CompressedPayload} = snappy:compress(Payload),
     {1, CompressedPayload};
