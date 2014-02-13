@@ -353,7 +353,7 @@ option_id(16#0006) -> decimal;
 option_id(16#0007) -> double;
 option_id(16#0008) -> float;
 option_id(16#0009) -> int;
-option_id(16#000a) -> test;
+option_id(16#000a) -> text;
 option_id(16#000b) -> timestamp;
 option_id(16#000c) -> uuid;
 option_id(16#000d) -> varchar;
