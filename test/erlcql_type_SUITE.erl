@@ -45,7 +45,7 @@ ascii(Config) ->
       Config, <<"ascii">>,
       fun(Client, Table) ->
               ?FORALL(
-                 Ascii, ascii(),
+                 Ascii, ascii_string(),
                  begin
                      Value = [$', escape_string(Ascii), $'],
                      insert_type(Client, Table, Value),
@@ -58,7 +58,7 @@ bigint(Config) ->
       Config, <<"bigint">>,
       fun(Client, Table) ->
               ?FORALL(
-                 BigInt, bigint(),
+                 BigInt, big_integer(),
                  begin
                      Value = list_to_binary(integer_to_list(BigInt)),
                      insert_type(Client, Table, Value),
@@ -166,7 +166,7 @@ int(Config) ->
       Config, <<"int">>,
       fun(Client, Table) ->
               ?FORALL(
-                 Int, smallint(),
+                 Int, small_integer(),
                  begin
                      Value = list_to_binary(integer_to_list(Int)),
                      insert_type(Client, Table, Value),
@@ -179,7 +179,7 @@ text(Config) ->
       Config, <<"text">>,
       fun(Client, Table) ->
               ?FORALL(
-                 Text, varchar(),
+                 Text, varchar_string(),
                  begin
                      Value = [$', escape_string(Text), $'],
                      insert_type(Client, Table, Value),
@@ -214,7 +214,7 @@ varchar(Config) ->
       Config, <<"varchar">>,
       fun(Client, Table) ->
               ?FORALL(
-                 VarChar, varchar(),
+                 VarChar, varchar_string(),
                  begin
                      Value = [$', escape_string(VarChar), $'],
                      insert_type(Client, Table, Value),
@@ -227,7 +227,7 @@ varint(Config) ->
       Config, <<"varint">>,
       fun(Client, Table) ->
               ?FORALL(
-                 VarInt, bigint(),
+                 VarInt, big_integer(),
                  begin
                      Value = list_to_binary(integer_to_list(VarInt)),
                      insert_type(Client, Table, Value),
@@ -270,23 +270,23 @@ get_value(Pid, Table) ->
 
 %% Generators -----------------------------------------------------------------
 
-ascii() ->
-    ?LET(L, list(ascii_char()), L).
+ascii_string() ->
+    list(ascii_char()).
 
 ascii_char() ->
-    ?LET(C, integer(0, 127), C).
+    integer(0, 127).
 
-bigint() ->
+big_integer() ->
     union([integer(), integer(-(1 bsl 63), (1 bsl 63) - 1)]).
 
-smallint() ->
+small_integer() ->
     union([integer(), integer(-(1 bsl 31), (1 bsl 31) - 1)]).
 
 ipv4() ->
     {integer(0, 255), integer(0, 255), integer(0, 255), integer(0, 255)}.
 
-varchar() ->
-    ?LET(S, list(unicode_char()), S).
+varchar_string() ->
+    list(unicode_char()).
 
 unicode_char() ->
     ?SUCHTHAT(C, char(), C < 16#D800 orelse C > 16#DFFF).

@@ -164,7 +164,7 @@ b2l(true) ->
     "true".
 
 prop_map_of_strings_to_boolean(Pid) ->
-    ?FORALL(L, list({erlcql_type_SUITE:varchar(), boolean()}),
+    ?FORALL(L, list({erlcql_type_SUITE:varchar_string(), boolean()}),
             begin
                 L2 = [{erlcql_type_SUITE:utf8_to_binary(U), B} || {U, B} <- L],
                 ML = [[$', erlcql_type_SUITE:escape_string(U), "': ", b2l(B)]
