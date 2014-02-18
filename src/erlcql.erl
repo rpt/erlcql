@@ -97,4 +97,7 @@ default(cql_version) -> <<"3.1.2">>;
 default(compression) -> false;
 default(tracing) -> false;
 default(event_handler) -> self();
-default(consistency) -> quorum.
+default(consistency) -> quorum;
+default(auto_reconnect) -> false;
+default(reconnect_start) -> 1000;
+default(reconnect_max) -> 30000.
