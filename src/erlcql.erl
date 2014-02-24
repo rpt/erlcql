@@ -48,8 +48,8 @@
               uuid/0,
               collection_type/0,
               erlcql_list/0,
-              set/0,
-              map/0]).
+              erlcql_set/0,
+              erlcql_map/0]).
 
 %%-----------------------------------------------------------------------------
 %% API functions
