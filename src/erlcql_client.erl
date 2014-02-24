@@ -42,6 +42,8 @@
          terminate/3]).
 -export([startup/2,
          startup/3,
+         connect/2,
+         connect/3,
          ready/2,
          ready/3]).
 
@@ -55,8 +57,13 @@
           parent :: pid(),
           parser :: parser(),
           prepared_ets :: ets(),
-          socket :: socket(),
-          streams = lists:seq(1, 127) :: [integer()]
+          socket = undefined :: socket() | undefined,
+          streams = lists:seq(1, 127) :: [integer()],
+          host :: string(),
+          port = 9042 :: inet:port_number(),
+          auto_reconnect = false :: boolean(),
+          backoff :: backoff:backoff(),
+          cql_version :: bitstring()
          }).
 -type state() :: #state{}.
 
@@ -80,11 +87,16 @@ start_link(Opts) ->
     Opts3 = [{event_fun, EventFun} | Opts2],
     case gen_fsm:start_link(?MODULE, proplists:unfold(Opts3), []) of
         {ok, Pid} ->
-            case wait_until_ready(Pid, Opts) of
-                ready ->
-                    {ok, Pid};
-                {error, _Reason} = Error ->
-                    Error
+            case get_env_opt(auto_reconnect, Opts) of
+                false ->
+                    case wait_until_ready(Pid, Opts) of
+                        ready ->
+                            {ok, Pid};
+                        {error, _Reason} = Error ->
+                            Error
+                    end;
+                true ->
+                    {ok, Pid}
             end;
         {error, _Reason} = Error ->
             Error
@@ -148,23 +160,13 @@ await(QueryRef, Timeout) ->
 %%-----------------------------------------------------------------------------
 
 init(Opts) ->
-    Host = get_env_opt(host, Opts),
-    Port = get_env_opt(port, Opts),
-    case gen_tcp:connect(Host, Port, ?TCP_OPTS) of
-        {ok, Socket} ->
-            State = init_state(Opts, Socket),
-            ok = send_startup(State, Opts),
-            {ok, startup, State};
-        {error, Reason} ->
-            ?ERROR("Cannot connect to Cassandra: ~s", [Reason]),
-            {stop, Reason}
-    end.
+    State = init_state(Opts),
+    {ok, connect, State, 0}.
 
--spec init_state(Opts, Socket) -> State when
+-spec init_state(Opts) -> State when
       Opts :: proplist(),
-      Socket :: socket(),
       State :: state().
-init_state(Opts, Socket) ->
+init_state(Opts) ->
     AsyncETS = ets:new(?ASYNC_ETS_NAME, ?ASYNC_ETS_OPTS),
     Username = get_env_opt(username, Opts),
     Password = get_env_opt(password, Opts),
@@ -172,6 +174,13 @@ init_state(Opts, Socket) ->
     EventFun = get_opt(event_fun, Opts),
     Compression = get_env_opt(compression, Opts),
     Tracing = get_env_opt(tracing, Opts),
+    Host = get_env_opt(host, Opts),
+    Port = get_env_opt(port, Opts),
+    AutoReconnect = get_env_opt(auto_reconnect, Opts),
+    ReconnectStart = get_env_opt(reconnect_start, Opts),
+    ReconnectMax = get_env_opt(reconnect_max, Opts),
+    Backoff = backoff:init(ReconnectStart, ReconnectMax),
+    CQLVersion = get_env_opt(cql_version, Opts),
     Flags = {Compression, Tracing},
     Parent = get_opt(parent, Opts),
     Parser = erlcql_decode:new_parser(),
@@ -183,14 +192,17 @@ init_state(Opts, Socket) ->
            parent = Parent,
            parser = Parser,
            prepared_ets = PreparedETS,
-           socket = Socket}.
+           host = Host,
+           port = Port,
+           auto_reconnect = AutoReconnect,
+           backoff = Backoff,
+           cql_version = CQLVersion}.
 
--spec send_startup(State, Opts) -> ok when
-      State :: state(),
-      Opts :: proplist().
+-spec send_startup(State) -> ok when
+      State :: state().
 send_startup(#state{flags = {Compression, Tracing},
-                    socket = Socket}, Opts) ->
-    CQLVersion = get_env_opt(cql_version, Opts),
+                    socket = Socket,
+                    cql_version = CQLVersion}) ->
     Startup = erlcql_encode:startup(Compression, CQLVersion),
     Frame = erlcql_encode:frame(Startup, {false, Tracing}, 0),
     gen_tcp:send(Socket, Frame).
@@ -200,6 +212,8 @@ handle_event({timeout, Stream}, StateName,
                     streams = Streams} = State) ->
     true = ets:delete(AsyncETS, Stream),
     {next_state, StateName, State#state{streams = [Stream | Streams]}};
+handle_event(ready, ready, #state{auto_reconnect = true} = State) ->
+    {next_state, ready, State};
 handle_event(ready, ready, #state{parent = Parent} = State) ->
     Parent ! ready,
     {next_state, ready, State};
@@ -227,6 +241,42 @@ startup({_Ref, {register, _}}, _From, State) ->
     {reply, {error, not_ready}, startup, State};
 startup(Event, _From, State) ->
     {stop, {bad_event, Event}, State}.
+
+connect(timeout, State=#state{host=Host, port=Port, auto_reconnect=AutoReconnect, backoff = Backoff}) ->
+    case gen_tcp:connect(Host, Port, ?TCP_OPTS) of
+        {ok, Socket} ->
+            {_, Backoff2} = backoff:succeed(Backoff),
+            State2 = State#state{socket = Socket, backoff = Backoff2},
+            ok = send_startup(State2),
+            {next_state, startup, State2};
+        {error, Reason} ->
+            ?ERROR("Cannot connect to Cassandra: ~s", [Reason]),
+            case AutoReconnect of
+                true ->
+                    {Timeout, Backoff2} = timeout_increment(Backoff),
+                    {next_state, connect, State#state{socket=undefined, backoff = Backoff2}, Timeout};
+                false ->
+                    {stop, Reason}
+            end
+    end;
+connect(Event, State) ->
+    {stop, {bad_event, Event}, State}.
+
+connect({_Ref, {'query', _, _}}, _From, State) ->
+    {reply, {error, not_connected}, connect, State};
+connect({_Ref, {prepare, _}}, _From, State) ->
+    {reply, {error, not_connected}, connect, State};
+connect({_Ref, {prepare, _, _}}, _From, State) ->
+    {reply, {error, not_connected}, connect, State};
+connect({_Ref, {execute, _, _, _}}, _From, State) ->
+    {reply, {error, not_connected}, connect, State};
+connect({_Ref, options}, _From, State) ->
+    {reply, {error, not_connected}, connect, State};
+connect({_Ref, {register, _}}, _From, State) ->
+    {reply, {error, not_connected}, connect, State};
+connect(Event, _From, State) ->
+    {stop, {bad_event, Event}, State}.
+
 
 ready(Event, State) ->
     {stop, {bad_event, Event}, State}.
@@ -283,11 +333,21 @@ handle_info({tcp, Socket, Data}, startup, #state{socket = Socket} = State) ->
     ok = inet:setopts(Socket, [{active, once}]),
     parse_ready(Data, State);
 handle_info({tcp_closed, Socket}, _StateName,
-            #state{socket = Socket} = State) ->
+            #state{socket = Socket, auto_reconnect = false} = State) ->
     {stop, tcp_closed, State};
+handle_info({tcp_closed, Socket}, _StateName,
+            #state{socket = Socket, auto_reconnect = true, backoff = Backoff} = State) ->
+    ok = gen_tcp:close(Socket),
+    {Timeout, Backoff2} = timeout_increment(Backoff),
+    {next_state, connect, State#state{socket=undefined, backoff = Backoff2}, Timeout};
 handle_info({tcp_error, Socket, Reason}, _StateName,
-            #state{socket = Socket} = State) ->
+            #state{socket = Socket, auto_reconnect = false} = State) ->
     {stop, {tcp_error, Reason}, State};
+handle_info({tcp_error, Socket, _Reason}, _StateName,
+            #state{socket = Socket, auto_reconnect = true, backoff = Backoff} = State) ->
+    ok = gen_tcp:close(Socket),
+    {Timeout, Backoff2} = timeout_increment(Backoff),
+    {next_state, connect, State#state{socket = undefined, backoff = Backoff2}, Timeout};
 handle_info(Info, _StateName, State) ->
     {stop, {bad_info, Info}, State}.
 
@@ -532,3 +592,9 @@ get_env(Opt) ->
         undefined ->
             erlcql:default(Opt)
     end.
+
+-spec timeout_increment(backoff:backoff()) -> {pos_integer(), backoff:backoff()}.
+timeout_increment(Backoff) ->
+    Timeout = backoff:get(Backoff),
+    {_, Backoff2} = backoff:fail(Backoff),
+    {Timeout, Backoff2}.
