@@ -77,9 +77,10 @@ prepare(QueryString) ->
     {prepare, [long_string(QueryString)]}.
 
 %% @doc Encodes the execute request message body.
--spec execute(binary(), [binary()], consistency()) -> {execute, iolist()}.
+-spec execute(binary(), values(), consistency()) -> {execute, iolist()}.
 execute(QueryId, Values, Consistency) ->
-    {execute, [short_bytes(QueryId), bytes_list(Values),
+    BinaryValues = erlcql_convert:to_binary(Values),
+    {execute, [short_bytes(QueryId), BinaryValues,
                consistency(Consistency)]}.
 
 %% @doc Encodes the register request message body.
@@ -101,7 +102,7 @@ short(X) ->
 
 -spec string2(bitstring()) -> iolist().
 string2(String) ->
-    Length = byte_size(String),
+    Length = iolist_size(String),
     [short(Length), String].
 
 -spec long_string(iolist()) -> iolist().
@@ -109,16 +110,9 @@ long_string(String) ->
     Length = iolist_size(String),
     [int(Length), String].
 
--spec bytes(binary() | null) -> iolist().
-bytes(null) ->
-    int(-1);
-bytes(Bytes) ->
-    Length = byte_size(Bytes),
-    [int(Length), Bytes].
-
 -spec short_bytes(binary()) -> iolist().
 short_bytes(Bytes) ->
-    Length = byte_size(Bytes),
+    Length = iolist_size(Bytes),
     [short(Length), Bytes].
 
 -spec string_map([{K :: bitstring(), V :: bitstring()}]) -> iolist().
@@ -126,11 +120,6 @@ string_map(KeyValues) ->
     N = length(KeyValues),
     [short(N) | [[string2(Key), string2(Value)]
                  || {Key, Value} <- KeyValues]].
-
--spec bytes_list([binary() | null]) -> iolist().
-bytes_list(BytesList) ->
-    N = length(BytesList),
-    [short(N) | [bytes(Bytes) || Bytes <- BytesList]].
 
 -spec opcode(atom()) -> integer().
 opcode(startup) -> 1;
@@ -169,6 +158,8 @@ event_list(Events) ->
 -spec maybe_compress(compression(), iolist()) -> {0 | 1, iolist()}.
 maybe_compress(false, Payload) ->
     {0, Payload};
+maybe_compress(_Any, []) ->
+    {0, <<>>};
 maybe_compress(snappy, Payload) ->
     {ok, CompressedPayload} = snappy:compress(Payload),
     {1, CompressedPayload};

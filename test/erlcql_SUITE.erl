@@ -3,6 +3,7 @@
 -compile(export_all).
 
 -include_lib("common_test/include/ct.hrl").
+-include_lib("proper/include/proper.hrl").
 
 -define(OPTS, [{cql_version, <<"3.0.0">>}]).
 -define(KEYSPACE, <<"erlcql_tests">>).
@@ -15,6 +16,9 @@
 -define(CREATE_TABLE, <<"CREATE TABLE IF NOT EXISTS t ",
                         "(k int PRIMARY KEY, v text)">>).
 -define(DROP_TABLE, <<"DROP TABLE IF EXISTS t">>).
+
+-define(PROPTEST(A), true = proper:quickcheck(A())).
+-define(PROPTEST(A, Args), true = proper:quickcheck(A(Args), {numtests, 1000})).
 
 -import(erlcql, [q/2, q/3]).
 
@@ -84,28 +88,11 @@ groups() ->
       [create_keyspace,
        drop_keyspace]},
      {types, [],
-      [{native, [],
-        [ascii,
-         bigint,
-         blob,
-         boolean,
-         counter,
-         decimal,
-         double,
-         float,
-         inet,
-         int,
-         text,
-         timestamp,
-         timeuuid,
-         uuid,
-         varchar,
-         varint]},
-       {collections, [],
+      [{collections, [],
         [list_of_ints,
          list_of_varints,
          set_of_floats,
-         map_of_strings_to_stings]}]},
+         map_of_strings_to_boolean]}]},
      {data_manipulation, [],
       [insert]},
      {client, [],
@@ -134,95 +121,59 @@ drop_keyspace(Config) ->
 
 %% Type tests
 
-ascii(Config) ->
-    Pid = get_pid(Config),
-    check_type(Pid, ascii, <<"'string'">>, <<"string">>).
-
-bigint(Config) ->
-    Pid = get_pid(Config),
-    check_type(Pid, bigint, <<"12345678">>, 12345678).
-
-boolean(Config) ->
-    Pid = get_pid(Config),
-    check_type(Pid, boolean, <<"true">>, true).
-
-blob(Config) ->
-    Pid = get_pid(Config),
-    check_type(Pid, blob, <<"0x65726C63716C">>, <<"erlcql">>).
-
-counter(Config) ->
-    Pid = get_pid(Config),
-    create_type_table(Pid, counter),
-    q(Pid, <<"UPDATE erlcql_tests.t SET v = v + 1 WHERE k = 'key'">>, one),
-    q(Pid, <<"UPDATE erlcql_tests.t SET v = v + 2 WHERE k = 'key'">>, one),
-    q(Pid, <<"UPDATE erlcql_tests.t SET v = v + 3 WHERE k = 'key'">>, one),
-    6 = get_value(Pid, counter).
-
-decimal(Config) ->
-    Pid = get_pid(Config),
-    check_type(Pid, decimal, <<"1234.5678">>, 1234.5678).
-
-double(Config) ->
-    Pid = get_pid(Config),
-    check_type(Pid, double, <<"1.2345678">>, 1.2345678).
-
-float(Config) ->
-    Pid = get_pid(Config),
-    check_type(Pid, float, <<"0.15625">>, 0.15625).
-
-inet(Config) ->
-    Pid = get_pid(Config),
-    check_type(Pid, inet, <<"'10.0.2.12'">>, {10, 0, 2, 12}).
-
-int(Config) ->
-    Pid = get_pid(Config),
-    check_type(Pid, int, <<"1234">>, 1234).
-
-text(Config) ->
-    Pid = get_pid(Config),
-    check_type(Pid, text, <<"'string'">>, <<"string">>).
-
-timestamp(Config) ->
-    Pid = get_pid(Config),
-    check_type(Pid, timestamp, <<"1385553738674">>, 1385553738674).
-
-timeuuid(Config) ->
-    Uuid1 = <<"4600fa40-5756-11e3-949a-0800200c9a66">>,
-    Pid = get_pid(Config),
-    check_type(Pid, timeuuid, Uuid1, Uuid1).
-
-uuid(Config) ->
-    Uuid4 = <<"591f0d7e-be9e-48d0-8742-0c096937a902">>,
-    Pid = get_pid(Config),
-    check_type(Pid, uuid, Uuid4, Uuid4).
-
-varchar(Config) ->
-    Pid = get_pid(Config),
-    check_type(Pid, varchar, <<"'string'">>, <<"string">>).
-
-varint(Config) ->
-    Pid = get_pid(Config),
-    check_type(Pid, varint, <<"32800">>, 32800).
-
 list_of_ints(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, <<"list<int>">>, <<"[1, 2, 3]">>, [1, 2, 3]).
+    create_type_table(Pid, <<"list<int>">>),
+    ?PROPTEST(prop_list_of_ints, Pid).
+
+prop_list_of_ints(Pid) ->
+    ?FORALL(L, list(integer()),
+            begin
+                SL = [integer_to_list(X) || X <- L],
+                V = iolist_to_binary([$[, string:join(SL, ", "), $]]),
+                insert_type(Pid, V),
+                L == get_value(Pid, <<"list<int>">>)
+            end).
 
 list_of_varints(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, <<"list<varint>">>, <<"[1, 2, 3]">>, [1, 2, 3]).
+    create_type_table(Pid, <<"list<varint>">>),
+    ?PROPTEST(prop_list_of_varints, Pid).
+
+prop_list_of_varints(Pid) ->
+    ?FORALL(L, list(integer()),
+            begin
+                SL = [integer_to_list(X) || X <- L],
+                V = iolist_to_binary([$[, string:join(SL, ", "), $]]),
+                insert_type(Pid, V),
+                L == get_value(Pid, <<"list<varint>">>)
+            end).
 
 set_of_floats(Config) ->
     Pid = get_pid(Config),
     check_type(Pid, <<"set<double>">>, <<"{0.1, 1.2, 2.3}">>, [0.1, 1.2, 2.3]).
 
-map_of_strings_to_stings(Config) ->
+map_of_strings_to_boolean(Config) ->
     Pid = get_pid(Config),
-    check_type(Pid, <<"map<varchar, boolean>">>,
-               <<"{'Poland': true, 'USA': false}">>,
-               [{<<"Poland">>, true}, {<<"USA">>, false}]).
+    create_type_table(Pid, <<"map<varchar, boolean>">>),
+    ?PROPTEST(prop_map_of_strings_to_boolean, Pid).
 
-%% Data tests
+b2l(false) ->
+    "false";
+b2l(true) ->
+    "true".
+
+prop_map_of_strings_to_boolean(Pid) ->
+    ?FORALL(L, list({erlcql_type_SUITE:varchar_string(), boolean()}),
+            begin
+                L2 = [{erlcql_type_SUITE:utf8_to_binary(U), B} || {U, B} <- L],
+                ML = [[$', erlcql_type_SUITE:escape_string(U), "': ", b2l(B)]
+                      || {U, B} <- L],
+                V = iolist_to_binary([${, string:join(ML, ", "), $}]),
+                insert_type(Pid, V),
+                Z = get_value(Pid, <<"map<varchar, boolean>">>),
+                [] == Z -- L2
+            end).
 
 insert(Config) ->
     Pid = get_pid(Config),
@@ -272,8 +223,6 @@ insert_type(Pid, Value) ->
     {ok, void} = q(Pid, [<<"INSERT INTO erlcql_tests.t ",
                            "(k, v) VALUES ('key', ">>, Value, <<")">>]).
 
-get_value(Pid, text) ->
-    get_value(Pid, varchar);
 get_value(Pid, <<"list<int>">>) ->
     get_value(Pid, {list, int});
 get_value(Pid, <<"list<varint>">>) ->
@@ -289,9 +238,8 @@ get_value(Pid, Type) ->
 
 clean_type_table(TestCase, Config) ->
     {_, [], Tests} = lists:keyfind(types, 1, groups()),
-    {_, [], Native} = lists:keyfind(native, 1, Tests),
     {_, [], Collections} = lists:keyfind(collections, 1, Tests),
-    Types = Native ++ Collections,
+    Types = Collections,
     case lists:member(TestCase, Types) of
         true ->
             Pid = get_pid(Config),
