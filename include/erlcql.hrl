@@ -176,11 +176,11 @@
 
 -type erlcql_list() :: [native_type()].
 -type erlcql_set() :: [native_type()].
--type map() :: [{native_type(), native_type()}].
+-type erlcql_map() :: [{native_type(), native_type()}].
 
 -type collection_type() :: erlcql_list()
                          | erlcql_set()
-                         | map().
+                         | erlcql_map().
 
 -type type() :: native_type()
               | collection_type().

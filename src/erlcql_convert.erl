@@ -95,7 +95,7 @@ list_from_binary(N, Type, <<Size:?SHORT, Value:Size/binary,
     list_from_binary(N - 1, Type, Rest, [Value2 | Values]).
 
 -spec map_from_binary(integer(), {option_id(), option_id()},
-                      binary(), erlcql:map()) -> erlcql:map().
+                      binary(), erlcql_map()) -> erlcql_map().
 map_from_binary(0, _Types, <<>>, Values) ->
     lists:reverse(Values);
 map_from_binary(N, {KeyType, ValueType} = Types,
