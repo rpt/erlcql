@@ -263,17 +263,17 @@ connect(Event, State) ->
     {stop, {bad_event, Event}, State}.
 
 connect({_Ref, {'query', _, _}}, _From, State) ->
-    {reply, {error, not_ready}, connect, State};
+    {reply, {error, not_connected}, connect, State};
 connect({_Ref, {prepare, _}}, _From, State) ->
-    {reply, {error, not_ready}, connect, State};
+    {reply, {error, not_connected}, connect, State};
 connect({_Ref, {prepare, _, _}}, _From, State) ->
-    {reply, {error, not_ready}, connect, State};
+    {reply, {error, not_connected}, connect, State};
 connect({_Ref, {execute, _, _, _}}, _From, State) ->
-    {reply, {error, not_ready}, connect, State};
+    {reply, {error, not_connected}, connect, State};
 connect({_Ref, options}, _From, State) ->
-    {reply, {error, not_ready}, connect, State};
+    {reply, {error, not_connected}, connect, State};
 connect({_Ref, {register, _}}, _From, State) ->
-    {reply, {error, not_ready}, connect, State};
+    {reply, {error, not_connected}, connect, State};
 connect(Event, _From, State) ->
     {stop, {bad_event, Event}, State}.
 
