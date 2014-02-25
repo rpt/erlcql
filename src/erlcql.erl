@@ -100,4 +100,5 @@ default(event_handler) -> self();
 default(consistency) -> quorum;
 default(auto_reconnect) -> false;
 default(reconnect_start) -> 1000;
-default(reconnect_max) -> 30000.
+default(reconnect_max) -> 30000;
+default(keepalive) -> false. 
