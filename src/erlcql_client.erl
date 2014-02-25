@@ -61,6 +61,7 @@
           streams = lists:seq(1, 127) :: [integer()],
           host :: string(),
           port = 9042 :: inet:port_number(),
+          keepalive = false :: boolean(),
           auto_reconnect = false :: boolean(),
           backoff :: backoff:backoff(),
           cql_version :: bitstring()
@@ -176,6 +177,7 @@ init_state(Opts) ->
     Tracing = get_env_opt(tracing, Opts),
     Host = get_env_opt(host, Opts),
     Port = get_env_opt(port, Opts),
+    Keepalive = get_env_opt(keepalive, Opts),
     AutoReconnect = get_env_opt(auto_reconnect, Opts),
     ReconnectStart = get_env_opt(reconnect_start, Opts),
     ReconnectMax = get_env_opt(reconnect_max, Opts),
@@ -194,6 +196,7 @@ init_state(Opts) ->
            prepared_ets = PreparedETS,
            host = Host,
            port = Port,
+           keepalive = Keepalive,
            auto_reconnect = AutoReconnect,
            backoff = Backoff,
            cql_version = CQLVersion}.
@@ -242,8 +245,9 @@ startup({_Ref, {register, _}}, _From, State) ->
 startup(Event, _From, State) ->
     {stop, {bad_event, Event}, State}.
 
-connect(timeout, State=#state{host=Host, port=Port, auto_reconnect=AutoReconnect, backoff = Backoff}) ->
-    case gen_tcp:connect(Host, Port, ?TCP_OPTS) of
+connect(timeout, State=#state{host=Host, port=Port, auto_reconnect=AutoReconnect,
+                              backoff = Backoff, keepalive = Keepalive}) ->
+    case gen_tcp:connect(Host, Port, [{keepalive, Keepalive} | ?TCP_OPTS]) of
         {ok, Socket} ->
             {_, Backoff2} = backoff:succeed(Backoff),
             State2 = State#state{socket = Socket, backoff = Backoff2},
