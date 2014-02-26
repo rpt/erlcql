@@ -99,6 +99,9 @@ default(tracing) -> false;
 default(event_handler) -> self();
 default(consistency) -> quorum;
 default(auto_reconnect) -> false;
+default(register) -> [];
+default(use) -> undefined;
+default(prepare) -> [];
 default(reconnect_start) -> 1000;
 default(reconnect_max) -> 30000;
 default(keepalive) -> false. 

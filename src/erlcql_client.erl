@@ -42,8 +42,6 @@
          terminate/3]).
 -export([startup/2,
          startup/3,
-         connect/2,
-         connect/3,
          ready/2,
          ready/3]).
 
@@ -51,24 +49,26 @@
 
 -record(state, {
           async_ets :: ets(),
+          auto_reconnect :: boolean(),
+          backoff :: backoff:backoff(),
+          cql_version :: bitstring(),
           credentials :: {bitstring(), bitstring()},
+          database :: {Host :: string(), Port :: inet:port_number()},
+          events :: [event()],
           event_fun :: event_fun(),
           flags :: {atom(), boolean()},
+          keepalive = false :: boolean(),
+          keyspace :: bitstring(),
           parent :: pid(),
           parser :: parser(),
+          prepare :: [{Name :: atom(), Query :: iodata()}],
           prepared_ets :: ets(),
-          socket = undefined :: socket() | undefined,
-          streams = lists:seq(1, 127) :: [integer()],
-          host :: string(),
-          port = 9042 :: inet:port_number(),
-          keepalive = false :: boolean(),
-          auto_reconnect = false :: boolean(),
-          backoff :: backoff:backoff(),
-          cql_version :: bitstring()
+          socket :: undefined | socket(),
+          streams = lists:seq(1, 127) :: [integer()]
          }).
 -type state() :: #state{}.
 
--define(TCP_OPTS, [binary, {active, once}]).
+-define(TCP_OPTS, [binary, {active, false}, {packet, raw}]).
 -define(ASYNC_ETS_NAME, erlcql_async).
 -define(ASYNC_ETS_OPTS, [set, private,
                          {write_concurrency, true},
@@ -78,40 +78,20 @@
                             {read_concurrency, true}]).
 -define(TIMEOUT, timer:seconds(5)).
 
-%%-----------------------------------------------------------------------------
-%% API
-%%-----------------------------------------------------------------------------
+%% Start API ------------------------------------------------------------------
 
 start_link(Opts) ->
     Opts2 = [{parent, self()} | Opts],
     EventFun = event_fun(get_env_opt(event_handler, Opts)),
     Opts3 = [{event_fun, EventFun} | Opts2],
-    case gen_fsm:start_link(?MODULE, proplists:unfold(Opts3), []) of
-        {ok, Pid} ->
-            case get_env_opt(auto_reconnect, Opts) of
-                false ->
-                    case wait_until_ready(Pid, Opts) of
-                        ready ->
-                            {ok, Pid};
-                        {error, _Reason} = Error ->
-                            Error
-                    end;
-                true ->
-                    {ok, Pid}
-            end;
-        {error, _Reason} = Error ->
-            Error
-    end.
+    gen_fsm:start_link(?MODULE, proplists:unfold(Opts3), []).
+
+%% Request API ----------------------------------------------------------------
 
 -spec 'query'(pid(), iodata(), consistency()) ->
           result() | {error, Reason :: term()}.
 'query'(Pid, QueryString, Consistency) ->
     async_call(Pid, {'query', QueryString, Consistency}).
-
--spec async_query(pid(), iodata(), consistency()) ->
-          {ok, QueryRef :: erlcql:query_ref()} | {error, Reason :: term()}.
-async_query(Pid, QueryString, Consistency) ->
-    cast(Pid, {'query', QueryString, Consistency}).
 
 -spec prepare(pid(), iodata()) -> prepared() | {error, Reason :: term()}.
 prepare(Pid, QueryString) ->
@@ -126,11 +106,6 @@ prepare(Pid, QueryString, Name) ->
 execute(Pid, QueryId, Values, Consistency) ->
     async_call(Pid, {execute, QueryId, Values, Consistency}).
 
--spec async_execute(pid(), binary(), values(), consistency()) ->
-          {ok, QueryRef :: erlcql:query_ref()} | {error, Reason :: term()}.
-async_execute(Pid, QueryId, Values, Consistency) ->
-    cast(Pid, {execute, QueryId, Values, Consistency}).
-
 -spec options(pid()) -> supported() | {error, Reason :: term()}.
 options(Pid) ->
     async_call(Pid, options).
@@ -138,6 +113,18 @@ options(Pid) ->
 -spec register(pid(), [event_type()]) -> ready | {error, Reason :: term()}.
 register(Pid, Events) ->
     async_call(Pid, {register, Events}).
+
+%% Async request API ----------------------------------------------------------
+
+-spec async_query(pid(), iodata(), consistency()) ->
+          {ok, QueryRef :: erlcql:query_ref()} | {error, Reason :: term()}.
+async_query(Pid, QueryString, Consistency) ->
+    cast(Pid, {'query', QueryString, Consistency}).
+
+-spec async_execute(pid(), binary(), values(), consistency()) ->
+          {ok, QueryRef :: erlcql:query_ref()} | {error, Reason :: term()}.
+async_execute(Pid, QueryId, Values, Consistency) ->
+    cast(Pid, {execute, QueryId, Values, Consistency}).
 
 -spec await(erlcql:query_ref()) -> response() | {error, Reason :: term()}.
 await({ok, QueryRef}) ->
@@ -156,77 +143,98 @@ await({error, _Reason} = Error, _Timeout) ->
 await(QueryRef, Timeout) ->
     do_await(QueryRef, Timeout).
 
-%%-----------------------------------------------------------------------------
-%% gen_fsm callbacks
-%%-----------------------------------------------------------------------------
+%% FSM: init ------------------------------------------------------------------
 
 init(Opts) ->
     State = init_state(Opts),
-    {ok, connect, State, 0}.
+    case State#state.auto_reconnect of
+        false ->
+            try_connect(State);
+        true ->
+            _Ref = gen_fsm:send_event_after(0, reconnect),
+            {ok, startup, State}
+    end.
 
--spec init_state(Opts) -> State when
-      Opts :: proplist(),
-      State :: state().
+try_connect(#state{database = {Host, Port}} = State) ->
+    case gen_tcp:connect(Host, Port, ?TCP_OPTS) of
+        {ok, Socket} ->
+            State2 = State#state{socket = Socket},
+            case init_connection(State2) of
+                ok ->
+                    ok = inet:setopts(Socket, [{active, once}]),
+                    {ok, ready, State2};
+                {error, _} = Error ->
+                    {stop, Error}
+            end;
+        {error, _} = Error ->
+            {stop, Error}
+    end.
+
+-spec init_state(proplist()) -> state().
 init_state(Opts) ->
     AsyncETS = ets:new(?ASYNC_ETS_NAME, ?ASYNC_ETS_OPTS),
-    Username = get_env_opt(username, Opts),
-    Password = get_env_opt(password, Opts),
-    Credentials = {Username, Password},
-    EventFun = get_opt(event_fun, Opts),
-    Compression = get_env_opt(compression, Opts),
-    Tracing = get_env_opt(tracing, Opts),
-    Host = get_env_opt(host, Opts),
-    Port = get_env_opt(port, Opts),
-    Keepalive = get_env_opt(keepalive, Opts),
     AutoReconnect = get_env_opt(auto_reconnect, Opts),
     ReconnectStart = get_env_opt(reconnect_start, Opts),
     ReconnectMax = get_env_opt(reconnect_max, Opts),
     Backoff = backoff:init(ReconnectStart, ReconnectMax),
     CQLVersion = get_env_opt(cql_version, Opts),
+    Username = get_env_opt(username, Opts),
+    Password = get_env_opt(password, Opts),
+    Credentials = {Username, Password},
+    Host = get_env_opt(host, Opts),
+    Port = get_env_opt(port, Opts),
+    Database = {Host, Port},
+    EventFun = get_opt(event_fun, Opts),
+    Events = get_env_opt(register, Opts),
+    Compression = get_env_opt(compression, Opts),
+    Tracing = get_env_opt(tracing, Opts),
     Flags = {Compression, Tracing},
+    Keepalive = get_env_opt(keepalive, Opts),
+    Keyspace = get_env_opt(use, Opts),
     Parent = get_opt(parent, Opts),
     Parser = erlcql_decode:new_parser(),
+    Prepare = get_env_opt(prepare, Opts),
     PreparedETS = maybe_create_prepared_ets(Opts),
     #state{async_ets = AsyncETS,
-           credentials = Credentials,
-           event_fun = EventFun,
-           flags = Flags,
-           parent = Parent,
-           parser = Parser,
-           prepared_ets = PreparedETS,
-           host = Host,
-           port = Port,
-           keepalive = Keepalive,
            auto_reconnect = AutoReconnect,
            backoff = Backoff,
-           cql_version = CQLVersion}.
+           cql_version = CQLVersion,
+           credentials = Credentials,
+           database = Database,
+           event_fun = EventFun,
+           events = Events,
+           flags = Flags,
+           keepalive = Keepalive,
+           keyspace = Keyspace,
+           parent = Parent,
+           parser = Parser,
+           prepare = Prepare,
+           prepared_ets = PreparedETS}.
 
--spec send_startup(State) -> ok when
-      State :: state().
-send_startup(#state{flags = {Compression, Tracing},
-                    socket = Socket,
-                    cql_version = CQLVersion}) ->
-    Startup = erlcql_encode:startup(Compression, CQLVersion),
-    Frame = erlcql_encode:frame(Startup, {false, Tracing}, 0),
-    gen_tcp:send(Socket, Frame).
+%% State: startup -------------------------------------------------------------
 
-handle_event({timeout, Stream}, StateName,
-             #state{async_ets = AsyncETS,
-                    streams = Streams} = State) ->
-    true = ets:delete(AsyncETS, Stream),
-    {next_state, StateName, State#state{streams = [Stream | Streams]}};
-handle_event(ready, ready, #state{auto_reconnect = true} = State) ->
-    {next_state, ready, State};
-handle_event(ready, ready, #state{parent = Parent} = State) ->
-    Parent ! ready,
-    {next_state, ready, State};
-handle_event(Event, _StateName, State) ->
-    {stop, {bad_event, Event}, State}.
-
-handle_sync_event(Event, _From, _StateName, State) ->
-    Reason = {bad_event, Event},
-    {stop, Reason, {error, Reason}, State}.
-
+startup(reconnect, #state{backoff = Backoff,
+                          database = {Host, Port},
+                          keepalive = Keepalive} = State) ->
+    ?DEBUG("Trying to connect to ~p:~p", [Host, Port]),
+    case gen_tcp:connect(Host, Port, [{keepalive, Keepalive} | ?TCP_OPTS]) of
+        {ok, Socket} ->
+            ?INFO("Connected to ~p:~p", [Host, Port]),
+            {_, Backoff2} = backoff:succeed(Backoff),
+            State2 = State#state{socket = Socket,
+                                 backoff = Backoff2},
+            case init_connection(State2) of
+                ok ->
+                    ok = inet:setopts(Socket, [{active, once}]),
+                    {next_state, ready, State2};
+                {error, Reason} ->
+                    ?ERROR("Initial requests failed: ~s", [Reason]),
+                    try_again(State)
+            end;
+        {error, Reason} ->
+            ?ERROR("Cannot connect to Cassandra: ~s", [Reason]),
+            try_again(State)
+    end;
 startup(Event, State) ->
     {stop, {bad_event, Event}, State}.
 
@@ -245,42 +253,7 @@ startup({_Ref, {register, _}}, _From, State) ->
 startup(Event, _From, State) ->
     {stop, {bad_event, Event}, State}.
 
-connect(timeout, State=#state{host=Host, port=Port, auto_reconnect=AutoReconnect,
-                              backoff = Backoff, keepalive = Keepalive}) ->
-    case gen_tcp:connect(Host, Port, [{keepalive, Keepalive} | ?TCP_OPTS]) of
-        {ok, Socket} ->
-            {_, Backoff2} = backoff:succeed(Backoff),
-            State2 = State#state{socket = Socket, backoff = Backoff2},
-            ok = send_startup(State2),
-            {next_state, startup, State2};
-        {error, Reason} ->
-            ?ERROR("Cannot connect to Cassandra: ~s", [Reason]),
-            case AutoReconnect of
-                true ->
-                    {Timeout, Backoff2} = timeout_increment(Backoff),
-                    {next_state, connect, State#state{socket=undefined, backoff = Backoff2}, Timeout};
-                false ->
-                    {stop, Reason}
-            end
-    end;
-connect(Event, State) ->
-    {stop, {bad_event, Event}, State}.
-
-connect({_Ref, {'query', _, _}}, _From, State) ->
-    {reply, {error, not_connected}, connect, State};
-connect({_Ref, {prepare, _}}, _From, State) ->
-    {reply, {error, not_connected}, connect, State};
-connect({_Ref, {prepare, _, _}}, _From, State) ->
-    {reply, {error, not_connected}, connect, State};
-connect({_Ref, {execute, _, _, _}}, _From, State) ->
-    {reply, {error, not_connected}, connect, State};
-connect({_Ref, options}, _From, State) ->
-    {reply, {error, not_connected}, connect, State};
-connect({_Ref, {register, _}}, _From, State) ->
-    {reply, {error, not_connected}, connect, State};
-connect(Event, _From, State) ->
-    {stop, {bad_event, Event}, State}.
-
+%% State: ready ---------------------------------------------------------------
 
 ready(Event, State) ->
     {stop, {bad_event, Event}, State}.
@@ -330,38 +303,43 @@ ready({Ref, {register, Events}}, {From, _}, State) ->
 ready(Event, _From, State) ->
     {stop, {bad_event, Event}, State}.
 
+%% FSM: event handling --------------------------------------------------------
+
+handle_event({timeout, Stream}, StateName,
+             #state{async_ets = AsyncETS,
+                    streams = Streams} = State) ->
+    true = ets:delete(AsyncETS, Stream),
+    {next_state, StateName, State#state{streams = [Stream | Streams]}};
+handle_event(Event, _StateName, State) ->
+    {stop, {bad_event, Event}, State}.
+
+handle_sync_event(Event, _From, _StateName, State) ->
+    Reason = {bad_event, Event},
+    {stop, Reason, {error, Reason}, State}.
+
 handle_info({tcp, Socket, Data}, ready, #state{socket = Socket} = State) ->
     ok = inet:setopts(Socket, [{active, once}]),
     parse_response(Data, State);
-handle_info({tcp, Socket, Data}, startup, #state{socket = Socket} = State) ->
-    ok = inet:setopts(Socket, [{active, once}]),
-    parse_ready(Data, State);
 handle_info({tcp_closed, Socket}, _StateName,
             #state{socket = Socket, auto_reconnect = false} = State) ->
     {stop, tcp_closed, State};
 handle_info({tcp_closed, Socket}, _StateName,
-            #state{socket = Socket, auto_reconnect = true, backoff = Backoff} = State) ->
-    ok = gen_tcp:close(Socket),
-    {Timeout, Backoff2} = timeout_increment(Backoff),
-    {next_state, connect, State#state{socket=undefined, backoff = Backoff2}, Timeout};
+            #state{socket = Socket, auto_reconnect = true} = State) ->
+    try_again(State);
 handle_info({tcp_error, Socket, Reason}, _StateName,
             #state{socket = Socket, auto_reconnect = false} = State) ->
     {stop, {tcp_error, Reason}, State};
 handle_info({tcp_error, Socket, _Reason}, _StateName,
-            #state{socket = Socket, auto_reconnect = true, backoff = Backoff} = State) ->
-    ok = gen_tcp:close(Socket),
-    {Timeout, Backoff2} = timeout_increment(Backoff),
-    {next_state, connect, State#state{socket = undefined, backoff = Backoff2}, Timeout};
+            #state{socket = Socket, auto_reconnect = true} = State) ->
+    try_again(State);
 handle_info(Info, _StateName, State) ->
     {stop, {bad_info, Info}, State}.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
-terminate(_Reason, _StateName, #state{socket = Socket}) when is_port(Socket) ->
-    gen_tcp:close(Socket);
-terminate(_Reason, _StateName, _State) ->
-    ok.
+terminate(_Reason, _StateName, #state{socket = Socket}) ->
+    close_socket(Socket).
 
 %%-----------------------------------------------------------------------------
 %% Internal functions
@@ -382,69 +360,158 @@ event_fun(Fun) when is_function(Fun) ->
 event_fun(Pid) when is_pid(Pid) ->
     fun(Event) -> Pid ! Event end.
 
--spec wait_until_ready(pid(), proplist()) -> ready | {error, atom()}.
-wait_until_ready(Pid, Opts) ->
-    receive
+-spec init_connection(state()) -> ok | {error, Reason :: term()}.
+init_connection(State) ->
+    Funs = [fun send_startup/1,
+            fun register_to_events/1,
+            fun use_keyspace/1,
+            fun prepare_queries/1],
+    apply_funs(Funs, State).
+
+-spec apply_funs([function()], state()) ->
+          {ok, state()} | {error, Reason :: term()}.
+apply_funs([], _State) -> ok;
+apply_funs([Fun | Rest], State) ->
+    case Fun(State) of
+        ok ->
+            apply_funs(Rest, State);
+        {error, _Reason} = Error ->
+            Error
+    end.
+
+-spec send_startup(state()) -> ok | {error, Reason :: term()}.
+send_startup(#state{flags = {Compression, Tracing},
+                    socket = Socket,
+                    cql_version = CQLVersion} = State) ->
+    Startup = erlcql_encode:startup(Compression, CQLVersion),
+    Frame = erlcql_encode:frame(Startup, {false, Tracing}, 0),
+    ok = gen_tcp:send(Socket, Frame),
+    wait_for_ready(State).
+
+-spec wait_for_ready(state()) -> ok | {error, term()}.    
+wait_for_ready(State) ->
+    case wait_for_response(State) of
         ready ->
-            init_env(Pid, Opts)
-    after
-        ?TIMEOUT ->
-            {error, timeout}
+            ok;
+        {authenticate, AuthClass} ->
+            case try_auth(AuthClass, State) of
+                ok ->
+                    wait_for_ready(State);
+                {error, _} = Error ->
+                    Error
+            end;
+        {error, _} = Error ->
+            Error
     end.
 
--spec init_env(Pid, Opts) -> ok | {error, Reason} when
-      Pid :: pid(),
-      Opts :: proplist(),
-      Reason :: atom().
-init_env(Pid, Opts) ->
-    UseFun = fun(Keyspace) -> 'query'(Pid, [<<"USE ">>, Keyspace], any) end,
-    PrepareFun = fun(Queries) -> apply_prepare(Pid, Queries) end,
-    RegisterFun = fun(Events) -> ?MODULE:register(Pid, Events) end,
-    apply_funs([{use, UseFun, bad_keyspace},
-                {prepare, PrepareFun, prepare_failed},
-                {register, RegisterFun, register_failed}], Opts).
+-spec try_auth(bitstring(), state()) -> ok | {error, term()}.
+try_auth(<<"org.apache.cassandra.auth.PasswordAuthenticator">>,
+         #state{credentials = {Username, Password}} = State) ->
+    Map = [{<<"username">>, Username},
+           {<<"password">>, Password}],
+    Credentials = erlcql_encode:credentials(Map),
+    ok = send_request(Credentials, 0, State);
+try_auth(Other, _State) ->
+    {error, {unknown_auth_class, Other}}.
 
--spec apply_prepare(Pid, Queries) -> {ok, void} | {error, Reason} when
-      Pid :: pid(),
-      Queries :: [Query],
-      Query :: {Name :: atom(), QueryString :: bitstring()},
-      Reason :: atom().
-apply_prepare(_Pid, []) ->
-    {ok, void};
-apply_prepare(Pid, [{Name, Query} | Queries]) ->
-    case prepare(Pid, Query, Name) of
-        {ok, _QueryId} ->
-            apply_prepare(Pid, Queries);
-        {error, _Reason} ->
-            {error, prepare_failed}
+-spec register_to_events(state()) -> ok | {error, Reason :: term()}.
+register_to_events(#state{events = undefined}) -> ok;
+register_to_events(#state{events = []}) -> ok;
+register_to_events(#state{events = Events} = State) ->
+    Register = erlcql_encode:register(Events),
+    ok = send_request(Register, 0, State),
+    case wait_for_response(State) of
+        ready ->
+            ok;
+        {error, {Reason, _, _}} ->
+            {error, Reason}
     end.
 
--spec apply_funs(Funs, Opts) -> ok | {error, Reason} when
-      Funs :: [{Opt :: atom(), Fun, Reason}],
-      Fun :: fun(() -> Response),
-      Response :: erlcql:response(),
-      Opts :: proplist(),
-      Reason :: atom().
-apply_funs([], _Opts) ->
-    ready;
-apply_funs([{Key, Fun, Error} | Rest], Opts) ->
-    Value = get_opt(Key, Opts),
-    case Value of
-        undefined ->
-            apply_funs(Rest, Opts);
-        Value ->
-            case Fun(Value) of
-                {ok, _} ->
-                    apply_funs(Rest, Opts);
-                ready ->
-                    apply_funs(Rest, Opts);
-                {error, _Reason} ->
-                    {error, Error}
-            end
+-spec use_keyspace(state()) -> ok | {error, Reason :: term()}.
+use_keyspace(#state{keyspace = undefined}) -> ok;
+use_keyspace(#state{keyspace = Keyspace} = State) ->
+    Use = erlcql_encode:'query'([<<"USE ">>, Keyspace], any),
+    ok = send_request(Use, 0, State),
+    case wait_for_response(State) of
+        {ok, Keyspace} ->
+            ok;
+        {error, {Reason, _, _}} ->
+            {error, Reason}
     end.
 
--spec async_call(pid(), tuple() | atom()) -> response() |
-                                             {error, Reason :: term()}.
+-spec prepare_queries(state()) -> ok | {error, Reason :: term()}.
+prepare_queries(#state{prepare = undefined}) -> ok;
+prepare_queries(#state{prepare = []}) -> ok;
+prepare_queries(#state{prepare = [{Name, Query} | Rest],
+                       prepared_ets = PreparedETS} = State) ->
+    Prepare = erlcql_encode:prepare(Query),
+    ok = send_request(Prepare, 0, State),
+    case wait_for_response(State) of
+        {ok, QueryId, Types} ->
+            true = ets:insert(PreparedETS, {Name, QueryId, Types}),            
+            prepare_queries(State#state{prepare = Rest});
+        {error, {Reason, _, _}} ->
+            {error, Reason}
+    end.
+
+-spec send_request(iodata(), integer(), state()) -> ok.
+send_request(Body, Stream, #state{socket = Socket,
+                                  flags = Flags}) ->
+    Frame = erlcql_encode:frame(Body, Flags, Stream),
+    ok = gen_tcp:send(Socket, Frame).
+
+-spec wait_for_response(state()) ->
+          ready() | authenticate() | response() | {error, term()}.
+wait_for_response(#state{socket = Socket} = State) ->
+    case gen_tcp:recv(Socket, 8, 5000) of
+        {ok, Header} ->
+            wait_for_body(Header, State);
+        {error, _Reason} = Error ->
+            Error
+    end.
+
+-spec wait_for_body(binary(), state()) ->
+          ready() | authenticate() | response() | {error, term()}.
+wait_for_body(<<_:32, 0:32>> = Header, State) ->
+    decode_response(Header, State);
+wait_for_body(<<_:32, Length:32>> = Header,
+              #state{socket = Socket} = State) ->
+    case gen_tcp:recv(Socket, Length, 5000) of
+        {ok, Body} ->
+            decode_response(<<Header/binary, Body/binary>>, State);
+        {error, _Reason} = Error ->
+            Error
+    end.
+
+-spec decode_response(binary(), state()) ->
+          ready() | authenticate() | response() | {error, term()}.
+decode_response(Binary, #state{flags = {Compression, _}}) ->
+    case erlcql_decode:decode(Binary, Compression) of
+        {ok, 0, Response, <<>>} ->
+            Response;
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec try_again(state()) -> {next_state, startup, state()}.
+try_again(#state{socket = Socket,
+                 backoff = Backoff} = State) ->
+    ok = close_socket(Socket),
+    Timeout = backoff:get(Backoff),
+    ?DEBUG("Backing off for ~pms", [Timeout]),
+    {_, Backoff2} = backoff:fail(Backoff),
+    State2 = State#state{socket = undefined,
+                         backoff = Backoff2},
+    _Ref = gen_fsm:send_event_after(Timeout, reconnect),
+    {next_state, startup, State2}.
+
+-spec close_socket(undefined | socket()) -> ok.
+close_socket(undefined) -> ok;
+close_socket(Socket) ->
+    ok = gen_tcp:close(Socket).
+
+-spec async_call(pid(), tuple() | atom()) ->
+          response() | {error, Reason :: term()}.
 async_call(Pid, Request) ->
     case cast(Pid, Request) of
         {ok, QueryRef} ->
@@ -453,8 +520,8 @@ async_call(Pid, Request) ->
             Error
     end.
 
--spec cast(pid(), tuple() | atom()) -> {ok, QueryRef :: erlcql:query_ref()} |
-                                       {error, Reason :: term()}.
+-spec cast(pid(), tuple() | atom()) ->
+          {ok, QueryRef :: erlcql:query_ref()} | {error, Reason :: term()}.
 cast(Pid, Request) ->
     Ref = make_ref(),
     case gen_fsm:sync_send_event(Pid, {Ref, Request}) of
@@ -478,58 +545,18 @@ do_await({Ref, Pid, Stream}, Timeout) ->
 -spec send(request(), Info, state()) ->
           {reply, {ok, Stream :: integer()}, ready, NewState :: state()} when
       Info :: {reference(), pid()} | {reference(), pid(), fun()}.
-send(Message, Info, #state{socket = Socket,
-                           flags = Flags,
-                           streams = [Stream | Streams],
-                           async_ets = AsyncETS} = State) ->
-    Frame = erlcql_encode:frame(Message, Flags, Stream),
-    ok = gen_tcp:send(Socket, Frame),
+send(Body, Info, #state{streams = [Stream | Streams],
+                        async_ets = AsyncETS} = State) ->
+    ok = send_request(Body, Stream, State),
     true = ets:insert(AsyncETS, {Stream, Info}),
     {reply, {ok, Stream}, ready, State#state{streams = Streams}}.
-
-parse_ready(Data, #state{parser = Parser,
-                         flags = {Compression, _},
-                         streams = Streams} = State) ->
-    case erlcql_decode:parse(Data, Parser, Compression) of
-        {ok, [], NewParser} ->
-            {next_state, startup, State#state{parser = NewParser}};
-        {ok, [{0, ready}], NewParser} ->
-            send_ready(),
-            {next_state, ready, State#state{parser = NewParser,
-                                            streams = [0 | Streams]}};
-        {ok, [{0, {authenticate, AuthClass}}], NewParser} ->
-            try_auth(AuthClass, State#state{parser = NewParser});
-        {ok, Other, _NewParser} ->
-            ?ERROR("Received this instead of ready/authenticate: ~p", [Other]),
-            {stop, {bad_response, Other}, State};
-        {error, Reason} ->
-            {stop, Reason, State}
-    end.
-
--spec send_ready() -> any().
-send_ready() ->
-    gen_fsm:send_all_state_event(self(), ready).
-
-try_auth(<<"org.apache.cassandra.auth.PasswordAuthenticator">>,
-         #state{socket = Socket,
-                credentials = {Username, Password},
-                flags = Flags} = State) ->
-    Map = [{<<"username">>, Username},
-           {<<"password">>, Password}],
-    Credentials = erlcql_encode:credentials(Map),
-    Frame = erlcql_encode:frame(Credentials, Flags, 0),
-    ok = gen_tcp:send(Socket, Frame),
-
-    {next_state, startup, State};
-try_auth(Other, State) ->
-    {stop, {unknown_auth_class, Other}, State}.
 
 parse_response(Data, #state{parser = Parser,
                             flags = {Compression, _}} = State) ->
     case erlcql_decode:parse(Data, Parser, Compression) of
-        {ok, Responses, NewParser} ->
-            NewState = handle_responses(Responses, State),
-            {next_state, ready, NewState#state{parser = NewParser}};
+        {ok, Responses, Parser2} ->
+            State2 = handle_responses(Responses, State),
+            {next_state, ready, State2#state{parser = Parser2}};
         {error, Reason} ->
             {stop, Reason, State}
     end.
@@ -539,7 +566,7 @@ handle_responses(Responses, State) ->
 
 handle_response({-1, {event, Event}},
                 #state{event_fun = EventFun} = State) ->
-    ?INFO("Received an event from Cassandra: ~p", [Event]),
+    ?DEBUG("Received an event from Cassandra: ~p", [Event]),
     EventFun(Event),
     State;
 handle_response({Stream, Response}, #state{async_ets = AsyncETS} = State) ->
@@ -562,9 +589,7 @@ send_response(Stream, Response, Pid, #state{async_ets = AsyncETS,
     Pid ! Response,
     State#state{streams = [Stream | Streams]}.
 
-%%-----------------------------------------------------------------------------
-%% Helper functions
-%%-----------------------------------------------------------------------------
+%% Helper functions -----------------------------------------------------------
 
 -spec get_env_opt(atom(), proplist()) -> Value :: term().
 get_env_opt(Opt, Opts) ->
@@ -596,9 +621,3 @@ get_env(Opt) ->
         undefined ->
             erlcql:default(Opt)
     end.
-
--spec timeout_increment(backoff:backoff()) -> {pos_integer(), backoff:backoff()}.
-timeout_increment(Backoff) ->
-    Timeout = backoff:get(Backoff),
-    {_, Backoff2} = backoff:fail(Backoff),
-    {Timeout, Backoff2}.

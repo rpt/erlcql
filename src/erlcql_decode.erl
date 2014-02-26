@@ -26,6 +26,8 @@
 -export([new_parser/0,
          parse/3]).
 
+-export([decode/2]).
+
 -include("erlcql.hrl").
 
 -define(STRING(Length), Length/bytes).
