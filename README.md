@@ -17,7 +17,7 @@ erlcql:start_link(Options :: proplists:proplist()) ->
 #### Options
 
 | Option          | Type                            | Default           |
-|:-------------- -|:------------------------------- |:----------------- |
+|:--------------- |:------------------------------- |:----------------- |
 | host            | string()                        | `"localhost"`     |
 | port            | integer()                       | `9042`            |
 | username        | bitstring()                     | `<<"cassandra">>` |
