@@ -1,7 +1,9 @@
-.PHONY: all deps compile dialyze wait test console clean
+.PHONY: all deps compile dialyze wait test console clean clean-db
 
 APPS = dialyzer.apps
 PLT = apps.plt
+DB_HOST = localhost
+DB_PORT = 9042
 TIMEOUT = 15
 
 all: deps compile
@@ -26,7 +28,7 @@ $(PLT): dialyzer.apps
 	@ echo " done"
 
 wait:
-	@ ./scripts/wait.sh $(TIMEOUT) || (echo "Cassandra down"; exit 1)
+	@ ./scripts/wait.escript $(DB_HOST) $(DB_PORT) $(TIMEOUT)
 
 test: compile wait
 	@ rebar skip_deps=true ct
@@ -36,3 +38,6 @@ console: compile
 
 clean:
 	@ rebar clean
+
+clean-db:
+	@ (cd scripts; ./clean.escript)
