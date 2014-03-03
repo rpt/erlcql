@@ -22,7 +22,7 @@ erlcql:start_link(Options :: proplists:proplist()) ->
 | port            | integer()                       | `9042`            |
 | username        | bitstring()                     | `<<"cassandra">>` |
 | password        | bitstring()                     | `<<"cassandra">>` |
-| cql_version     | bitstring()                     | `<<"3.1.1">>`     |
+| cql_version     | bitstring()                     | undefined         |
 | compression     | erlcql:compression()            | false             |
 | use             | bitstring()                     | undefined         |
 | event_handler   | pid() &#124; erlcql:event_fun() | self()            |

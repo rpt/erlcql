@@ -160,9 +160,9 @@ try_connect(#state{database = {Host, Port}} = State) ->
         {ok, Socket} ->
             State2 = State#state{socket = Socket},
             case init_connection(State2) of
-                ok ->
+                {ok, State3} ->
                     ok = inet:setopts(Socket, [{active, once}]),
-                    {ok, ready, State2};
+                    {ok, ready, State3};
                 {error, _} = Error ->
                     {stop, Error}
             end;
@@ -362,7 +362,8 @@ event_fun(Pid) when is_pid(Pid) ->
 
 -spec init_connection(state()) -> ok | {error, Reason :: term()}.
 init_connection(State) ->
-    Funs = [fun send_startup/1,
+    Funs = [fun send_options/1,
+            fun send_startup/1,
             fun register_to_events/1,
             fun use_keyspace/1,
             fun prepare_queries/1],
@@ -370,29 +371,42 @@ init_connection(State) ->
 
 -spec apply_funs([function()], state()) ->
           {ok, state()} | {error, Reason :: term()}.
-apply_funs([], _State) -> ok;
+apply_funs([], State) -> {ok, State};
 apply_funs([Fun | Rest], State) ->
     case Fun(State) of
-        ok ->
-            apply_funs(Rest, State);
+        {ok, State2} ->
+            apply_funs(Rest, State2);
         {error, _Reason} = Error ->
             Error
     end.
 
--spec send_startup(state()) -> ok | {error, Reason :: term()}.
+-spec send_options(state()) -> {ok, state()} | {error, Reason :: term()}.
+send_options(#state{cql_version = undefined} = State) ->
+    Options = erlcql_encode:options(),
+    ok = send_request(Options, 0, State),
+    case wait_for_response(State) of
+        {ok, Supported} ->
+            CQLVersion = hd(get_opt(<<"CQL_VERSION">>, Supported)),
+            State2 = State#state{cql_version = CQLVersion},
+            {ok, State2};
+        {error, {Reason, _, _}} ->
+            {error, Reason}
+    end;
+send_options(State) ->
+    {ok, State}.
+
+-spec send_startup(state()) -> {ok, state()} | {error, Reason :: term()}.
 send_startup(#state{flags = {Compression, Tracing},
-                    socket = Socket,
                     cql_version = CQLVersion} = State) ->
     Startup = erlcql_encode:startup(Compression, CQLVersion),
-    Frame = erlcql_encode:frame(Startup, {false, Tracing}, 0),
-    ok = gen_tcp:send(Socket, Frame),
+    ok = send_request(Startup, 0, State#state{flags = {false, Tracing}}),
     wait_for_ready(State).
 
--spec wait_for_ready(state()) -> ok | {error, term()}.    
+-spec wait_for_ready(state()) -> {ok, state()} | {error, term()}.
 wait_for_ready(State) ->
     case wait_for_response(State) of
         ready ->
-            ok;
+            {ok, State};
         {authenticate, AuthClass} ->
             case try_auth(AuthClass, State) of
                 ok ->
@@ -414,34 +428,39 @@ try_auth(<<"org.apache.cassandra.auth.PasswordAuthenticator">>,
 try_auth(Other, _State) ->
     {error, {unknown_auth_class, Other}}.
 
--spec register_to_events(state()) -> ok | {error, Reason :: term()}.
-register_to_events(#state{events = undefined}) -> ok;
-register_to_events(#state{events = []}) -> ok;
+-spec register_to_events(state()) -> {ok, state()} | {error, Reason :: term()}.
+register_to_events(#state{events = undefined} = State) ->
+    {ok, State};
+register_to_events(#state{events = []} = State) ->
+    {ok, State};
 register_to_events(#state{events = Events} = State) ->
     Register = erlcql_encode:register(Events),
     ok = send_request(Register, 0, State),
     case wait_for_response(State) of
         ready ->
-            ok;
+            {ok, State};
         {error, {Reason, _, _}} ->
             {error, Reason}
     end.
 
--spec use_keyspace(state()) -> ok | {error, Reason :: term()}.
-use_keyspace(#state{keyspace = undefined}) -> ok;
+-spec use_keyspace(state()) -> {ok, state()} | {error, Reason :: term()}.
+use_keyspace(#state{keyspace = undefined} = State) ->
+    {ok, State};
 use_keyspace(#state{keyspace = Keyspace} = State) ->
     Use = erlcql_encode:'query'([<<"USE ">>, Keyspace], any),
     ok = send_request(Use, 0, State),
     case wait_for_response(State) of
         {ok, Keyspace} ->
-            ok;
+            {ok, State};
         {error, {Reason, _, _}} ->
             {error, Reason}
     end.
 
--spec prepare_queries(state()) -> ok | {error, Reason :: term()}.
-prepare_queries(#state{prepare = undefined}) -> ok;
-prepare_queries(#state{prepare = []}) -> ok;
+-spec prepare_queries(state()) -> {ok, state()} | {error, Reason :: term()}.
+prepare_queries(#state{prepare = undefined} = State) ->
+    {ok, State};
+prepare_queries(#state{prepare = []} = State) ->
+    {ok, State};
 prepare_queries(#state{prepare = [{Name, Query} | Rest],
                        prepared_ets = PreparedETS} = State) ->
     Prepare = erlcql_encode:prepare(Query),
