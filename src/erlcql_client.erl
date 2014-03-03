@@ -224,9 +224,9 @@ startup(reconnect, #state{backoff = Backoff,
             State2 = State#state{socket = Socket,
                                  backoff = Backoff2},
             case init_connection(State2) of
-                ok ->
+                {ok, State3} ->
                     ok = inet:setopts(Socket, [{active, once}]),
-                    {next_state, ready, State2};
+                    {next_state, ready, State3};
                 {error, Reason} ->
                     ?ERROR("Initial requests failed: ~s", [Reason]),
                     try_again(State)
