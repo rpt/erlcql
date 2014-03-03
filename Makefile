@@ -26,7 +26,7 @@ $(PLT): dialyzer.apps
 	@ echo " done"
 
 wait:
-	@ ./wait $(TIMEOUT) || (echo "Cassandra down"; exit 1)
+	@ ./scripts/wait.sh $(TIMEOUT) || (echo "Cassandra down"; exit 1)
 
 test: compile wait
 	@ rebar skip_deps=true ct
