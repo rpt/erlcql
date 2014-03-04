@@ -486,16 +486,21 @@ use_keyspace(#state{keyspace = Keyspace} = State) ->
 -spec prepare_queries(state()) -> {ok, state()} | {error, Reason :: term()}.
 prepare_queries(#state{prepare = undefined} = State) ->
     {ok, State};
-prepare_queries(#state{prepare = []} = State) ->
+prepare_queries(#state{prepare = Queries} = State) ->
+    prepare_queries(Queries, State).
+
+-spec prepare_queries([{atom(), iodata()}], state()) ->
+          {ok, state()} | {error, Reason :: term()}.
+prepare_queries([], State) ->
     {ok, State};
-prepare_queries(#state{prepare = [{Name, Query} | Rest],
-                       prepared_ets = PreparedETS} = State) ->
+prepare_queries([{Name, Query} | Rest],
+                #state{prepared_ets = PreparedETS} = State) ->
     Prepare = erlcql_encode:prepare(Query),
     ok = send_request(Prepare, 0, State),
     case wait_for_response(State) of
         {ok, QueryId, Types} ->
-            true = ets:insert(PreparedETS, {Name, QueryId, Types}),            
-            prepare_queries(State#state{prepare = Rest});
+            true = ets:insert(PreparedETS, {Name, QueryId, Types}),
+            prepare_queries(Rest, State);
         {error, {Reason, _, _}} ->
             {error, Reason}
     end.
