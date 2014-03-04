@@ -155,18 +155,24 @@ init(Opts) ->
             {ok, startup, State}
     end.
 
-try_connect(#state{database = {Host, Port}} = State) ->
-    case gen_tcp:connect(Host, Port, ?TCP_OPTS) of
+try_connect(#state{database = {Host, Port},
+                   keepalive = Keepalive} = State) ->
+    ?DEBUG("Trying to connect to ~p:~p", [Host, Port]),
+    case gen_tcp:connect(Host, Port, [{keepalive, Keepalive} | ?TCP_OPTS]) of
         {ok, Socket} ->
+            ?INFO("Connected to ~p:~p", [Host, Port]),
             State2 = State#state{socket = Socket},
             case init_connection(State2) of
                 {ok, State3} ->
+                    ?DEBUG("Connection init successful"),
                     ok = inet:setopts(Socket, [{active, once}]),
                     {ok, ready, State3};
-                {error, _} = Error ->
+                {error, Reason} = Error ->
+                    ?ERROR("Connection init failed: ~s", [Reason]),
                     {stop, Error}
             end;
-        {error, _} = Error ->
+        {error, Reason} = Error ->
+            ?ERROR("Cannot connect to ~p:~p: ~s", [Host, Port, Reason]),
             {stop, Error}
     end.
 
@@ -225,41 +231,53 @@ startup(reconnect, #state{backoff = Backoff,
                                  backoff = Backoff2},
             case init_connection(State2) of
                 {ok, State3} ->
+                    ?DEBUG("Connection init successful"),
                     ok = inet:setopts(Socket, [{active, once}]),
                     {next_state, ready, State3};
                 {error, Reason} ->
-                    ?ERROR("Initial requests failed: ~s", [Reason]),
+                    ?ERROR("Connection init failed: ~s", [Reason]),
                     try_again(State)
             end;
         {error, Reason} ->
-            ?ERROR("Cannot connect to Cassandra: ~s", [Reason]),
+            ?ERROR("Cannot connect to ~p:~p: ~s", [Host, Port, Reason]),
             try_again(State)
     end;
 startup(Event, State) ->
+    ?ERROR("Bad event (startup): ~p", [Event]),
     {stop, {bad_event, Event}, State}.
 
-startup({_Ref, {'query', _, _}}, _From, State) ->
-    {reply, {error, not_ready}, startup, State};
-startup({_Ref, {prepare, _}}, _From, State) ->
-    {reply, {error, not_ready}, startup, State};
-startup({_Ref, {prepare, _, _}}, _From, State) ->
-    {reply, {error, not_ready}, startup, State};
-startup({_Ref, {execute, _, _, _}}, _From, State) ->
-    {reply, {error, not_ready}, startup, State};
+startup({_Ref, {'query', Query, _}}, _From, State) ->
+    not_ready('query', Query, State);
+startup({_Ref, {prepare, Query}}, _From, State) ->
+    not_ready(prepare, Query, State);
+startup({_Ref, {prepare, Query, _}}, _From, State) ->
+    not_ready(prepare, Query, State);
+startup({_Ref, {execute, Query, _, _}}, _From, State) ->
+    not_ready(execute, Query, State);
 startup({_Ref, options}, _From, State) ->
-    {reply, {error, not_ready}, startup, State};
+    not_ready(options, State);
 startup({_Ref, {register, _}}, _From, State) ->
-    {reply, {error, not_ready}, startup, State};
+    not_ready(register, State);
 startup(Event, _From, State) ->
+    ?ERROR("Bad event (startup/sync): ~p", [Event]),
     {stop, {bad_event, Event}, State}.
+
+not_ready(Request, State) ->
+    ?DEBUG("Connection not ready for '~s'", [Request]),
+    {reply, {error, not_ready}, startup, State}.
+
+not_ready(Request, Info, State) ->
+    ?DEBUG("Connection not ready for '~s': ~p", [Request, Info]),
+    {reply, {error, not_ready}, startup, State}.
 
 %% State: ready ---------------------------------------------------------------
 
 ready(Event, State) ->
+    ?ERROR("Bad event (ready): ~p", [Event]),
     {stop, {bad_event, Event}, State}.
 
 ready({_Ref, _}, _From, #state{streams = []} = State) ->
-    ?CRITICAL("Too many requests to Cassandra!"),
+    ?CRITICAL("Too many requests!"),
     {reply, {error, too_many_requests}, ready, State};
 ready({Ref, {'query', QueryString, Consistency}}, {From, _}, State) ->
     Query = erlcql_encode:'query'(QueryString, Consistency),
@@ -292,6 +310,7 @@ ready({Ref, {execute, QueryName, Values, Consistency}}, {From, _},
             Execute = erlcql_encode:execute(QueryId, TypedValues, Consistency),
             send(Execute, {Ref, From}, State);
         [] ->
+            ?DEBUG("Execute failed, invalid query name: ~s", [QueryName]),
             {reply, {error, invalid_query_name}, ready, State}
     end;
 ready({Ref, options}, {From, _}, State) ->
@@ -301,6 +320,7 @@ ready({Ref, {register, Events}}, {From, _}, State) ->
     Register = erlcql_encode:register(Events),
     send(Register, {Ref, From}, State);
 ready(Event, _From, State) ->
+    ?ERROR("Bad event (ready/sync): ~p", [Event]),
     {stop, {bad_event, Event}, State}.
 
 %% FSM: event handling --------------------------------------------------------
@@ -310,10 +330,12 @@ handle_event({timeout, Stream}, StateName,
                     streams = Streams} = State) ->
     true = ets:delete(AsyncETS, Stream),
     {next_state, StateName, State#state{streams = [Stream | Streams]}};
-handle_event(Event, _StateName, State) ->
+handle_event(Event, StateName, State) ->
+    ?ERROR("Bad event (~s/handle_event): ~p", [StateName, Event]),
     {stop, {bad_event, Event}, State}.
 
-handle_sync_event(Event, _From, _StateName, State) ->
+handle_sync_event(Event, _From, StateName, State) ->
+    ?ERROR("Bad event(~s/handle_sync_event): ~p", [StateName, Event]),
     Reason = {bad_event, Event},
     {stop, Reason, {error, Reason}, State}.
 
@@ -322,17 +344,22 @@ handle_info({tcp, Socket, Data}, ready, #state{socket = Socket} = State) ->
     parse_response(Data, State);
 handle_info({tcp_closed, Socket}, _StateName,
             #state{socket = Socket, auto_reconnect = false} = State) ->
+    ?ERROR("TCP socket ~p closed", [Socket]),
     {stop, tcp_closed, State};
 handle_info({tcp_closed, Socket}, _StateName,
             #state{socket = Socket, auto_reconnect = true} = State) ->
+    ?ERROR("TCP socket ~p closed", [Socket]),
     try_again(State);
 handle_info({tcp_error, Socket, Reason}, _StateName,
             #state{socket = Socket, auto_reconnect = false} = State) ->
+    ?ERROR("TCP socket ~p error: ~p", [Socket, Reason]),
     {stop, {tcp_error, Reason}, State};
-handle_info({tcp_error, Socket, _Reason}, _StateName,
+handle_info({tcp_error, Socket, Reason}, _StateName,
             #state{socket = Socket, auto_reconnect = true} = State) ->
+    ?ERROR("TCP socket ~p error: ~p", [Socket, Reason]),
     try_again(State);
-handle_info(Info, _StateName, State) ->
+handle_info(Info, StateName, State) ->
+    ?ERROR("Bad info (~s/handle_info): ~p", [StateName, Info]),
     {stop, {bad_info, Info}, State}.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
@@ -577,6 +604,7 @@ parse_response(Data, #state{parser = Parser,
             State2 = handle_responses(Responses, State),
             {next_state, ready, State2#state{parser = Parser2}};
         {error, Reason} ->
+            ?ERROR("Parsing response failed: ~p", [Reason]),
             {stop, Reason, State}
     end.
 
@@ -585,7 +613,7 @@ handle_responses(Responses, State) ->
 
 handle_response({-1, {event, Event}},
                 #state{event_fun = EventFun} = State) ->
-    ?DEBUG("Received an event from Cassandra: ~p", [Event]),
+    ?DEBUG("Received an event: ~p", [Event]),
     EventFun(Event),
     State;
 handle_response({Stream, Response}, #state{async_ets = AsyncETS} = State) ->

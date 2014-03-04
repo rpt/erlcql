@@ -191,8 +191,17 @@
 %% Logging macros
 %%-----------------------------------------------------------------------------
 
--ifdef(LOGS).
--ifdef(LAGER).
+-ifdef(ERLCQL_NO_LOGS).
+-define(ERROR(_Format, _Data), ok).
+-define(EMERGENCY(_Format, _Data), ok).
+-define(ALERT(_Format, _Data), ok).
+-define(CRITICAL(_Format, _Data), ok).
+-define(WARNING(_Format, _Data), ok).
+-define(INFO(_Format, _Data), ok).
+-define(NOTICE(_Format, _Data), ok).
+-define(DEBUG(_Format, _Data), ok).
+-else.
+-ifdef(ERLCQL_LAGER).
 -compile({parse_transform, lager_transform}).
 -define(EMERGENCY(Format, Data), lager:emergency(Format, Data)).
 -define(ALERT(Format, Data), lager:alert(Format, Data)).
@@ -212,15 +221,6 @@
 -define(NOTICE(Format, Data), ?INFO(Format, Data)).
 -define(DEBUG(Format, Data), ?INFO(Format, Data)).
 -endif.
--else.
--define(ERROR(_Format, _Data), ok).
--define(EMERGENCY(_Format, _Data), ok).
--define(ALERT(_Format, _Data), ok).
--define(CRITICAL(_Format, _Data), ok).
--define(WARNING(_Format, _Data), ok).
--define(INFO(_Format, _Data), ok).
--define(NOTICE(_Format, _Data), ok).
--define(DEBUG(_Format, _Data), ok).
 -endif.
 
 -define(EMERGENCY(Format), ?EMERGENCY(Format, [])).
