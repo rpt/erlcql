@@ -239,7 +239,7 @@ startup(reconnect, #state{backoff = Backoff,
                     try_again(State)
             end;
         {error, Reason} ->
-            ?ERROR("Cannot connect to ~p:~p: ~s", [Host, Port, Reason]),
+            ?WARNING("Cannot connect to ~p:~p: ~s", [Host, Port, Reason]),
             try_again(State)
     end;
 startup(Event, State) ->
@@ -348,7 +348,7 @@ handle_info({tcp_closed, Socket}, _StateName,
     {stop, tcp_closed, State};
 handle_info({tcp_closed, Socket}, _StateName,
             #state{socket = Socket, auto_reconnect = true} = State) ->
-    ?ERROR("TCP socket ~p closed", [Socket]),
+    ?WARNING("TCP socket ~p closed", [Socket]),
     try_again(State);
 handle_info({tcp_error, Socket, Reason}, _StateName,
             #state{socket = Socket, auto_reconnect = false} = State) ->
@@ -356,7 +356,7 @@ handle_info({tcp_error, Socket, Reason}, _StateName,
     {stop, {tcp_error, Reason}, State};
 handle_info({tcp_error, Socket, Reason}, _StateName,
             #state{socket = Socket, auto_reconnect = true} = State) ->
-    ?ERROR("TCP socket ~p error: ~p", [Socket, Reason]),
+    ?WARNING("TCP socket ~p error: ~p", [Socket, Reason]),
     try_again(State);
 handle_info(Info, StateName, State) ->
     ?ERROR("Bad info (~s/handle_info): ~p", [StateName, Info]),
