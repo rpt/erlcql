@@ -50,7 +50,7 @@
 -record(state, {
           async_ets :: ets(),
           auto_reconnect :: boolean(),
-          backoff :: backoff:backoff(),
+          backoff :: backoff(),
           cql_version :: bitstring(),
           credentials :: {bitstring(), bitstring()},
           database :: {Host :: string(), Port :: inet:port_number()},
@@ -77,6 +77,13 @@
 -define(PREPARED_ETS_OPTS, [set, private,
                             {read_concurrency, true}]).
 -define(TIMEOUT, timer:seconds(5)).
+
+-record(backoff, {
+          start :: pos_integer(),
+          max :: pos_integer() | infinity,
+          current :: pos_integer()
+         }).
+-type backoff() :: #backoff{}.
 
 %% Start API ------------------------------------------------------------------
 
@@ -182,7 +189,7 @@ init_state(Opts) ->
     AutoReconnect = get_env_opt(auto_reconnect, Opts),
     ReconnectStart = get_env_opt(reconnect_start, Opts),
     ReconnectMax = get_env_opt(reconnect_max, Opts),
-    Backoff = backoff:init(ReconnectStart, ReconnectMax),
+    Backoff = backoff_init(ReconnectStart, ReconnectMax),
     CQLVersion = get_env_opt(cql_version, Opts),
     Username = get_env_opt(username, Opts),
     Password = get_env_opt(password, Opts),
@@ -226,7 +233,7 @@ startup(reconnect, #state{backoff = Backoff,
     case gen_tcp:connect(Host, Port, [{keepalive, Keepalive} | ?TCP_OPTS]) of
         {ok, Socket} ->
             ?INFO("Connected to ~p:~p", [Host, Port]),
-            {_, Backoff2} = backoff:succeed(Backoff),
+            Backoff2 = backoff_succeed(Backoff),
             State2 = State#state{socket = Socket,
                                  backoff = Backoff2},
             case init_connection(State2) of
@@ -548,9 +555,8 @@ decode_response(Binary, #state{flags = {Compression, _}}) ->
 try_again(#state{socket = Socket,
                  backoff = Backoff} = State) ->
     ok = close_socket(Socket),
-    Timeout = backoff:get(Backoff),
+    {Timeout, Backoff2} = backoff_fail(Backoff),
     ?DEBUG("Backing off for ~pms", [Timeout]),
-    {_, Backoff2} = backoff:fail(Backoff),
     State2 = State#state{socket = undefined,
                          backoff = Backoff2},
     _Ref = gen_fsm:send_event_after(Timeout, reconnect),
@@ -673,3 +679,21 @@ get_env(Opt) ->
         undefined ->
             erlcql:default(Opt)
     end.
+
+-spec backoff_init(Start, Max) -> backoff() when
+    Start :: pos_integer(),
+    Max :: pos_integer() | infinity.
+backoff_init(Start, Max) ->
+    #backoff{start = Start,
+             max = Max,
+             current = Start}.
+
+-spec backoff_fail(backoff()) -> {pos_integer(), backoff()}.
+backoff_fail(#backoff{current = Current, max = infinity} = Backoff) ->
+    {Current, Backoff#backoff{current = Current bsl 1}};
+backoff_fail(#backoff{current = Current, max = Max} = Backoff) ->
+    {Current, Backoff#backoff{current = min(Current bsl 1, Max)}}.
+
+-spec backoff_succeed(backoff()) -> backoff().
+backoff_succeed(#backoff{start = Start} = Backoff) ->
+    Backoff#backoff{current = Start}.

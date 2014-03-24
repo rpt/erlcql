@@ -8,5 +8,4 @@
    [kernel,
     stdlib,
     snappy,
-    lz4,
-    backoff]}]}.
+    lz4]}]}.
