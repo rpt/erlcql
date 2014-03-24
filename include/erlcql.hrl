@@ -50,7 +50,7 @@
 -type socket() :: inet:socket().
 -type ets() :: ets:tid().
 
--type request() :: {Opcode :: request_opcode(), Data :: iolist()}.
+-type request() :: {Opcode :: request_opcode(), Data :: iodata()}.
 -type request_opcode() :: startup
                         | credentials
                         | 'query'
@@ -83,7 +83,8 @@
 -type void() :: {ok, void}.
 -type rows() :: {ok, {Rows :: [[type()]], Cols :: column_specs()}}.
 -type set_keyspace() :: {ok, Keyspace :: bitstring()}.
--type prepared() :: {ok, PreparedQueryId :: binary()}.
+-type prepared() :: {ok, PreparedQueryId :: binary()}
+                  | {ok, PreparedQueryId :: binary(), Types :: [option()]}.
 -type schema_change() :: {ok, created | updated | dropped}.
 
 -type response_opcode() :: error
@@ -185,7 +186,7 @@
 -type type() :: native_type()
               | collection_type().
 
--type values() :: [binary() | {option(), type()}].
+-type values() :: [type() | {option(), type()}].
 
 %%-----------------------------------------------------------------------------
 %% Logging macros

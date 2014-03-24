@@ -128,7 +128,7 @@ register(Pid, Events) ->
 async_query(Pid, QueryString, Consistency) ->
     cast(Pid, {'query', QueryString, Consistency}).
 
--spec async_execute(pid(), binary(), values(), consistency()) ->
+-spec async_execute(pid(), erlcql:uuid() | atom(), values(), consistency()) ->
           {ok, QueryRef :: erlcql:query_ref()} | {error, Reason :: term()}.
 async_execute(Pid, QueryId, Values, Consistency) ->
     cast(Pid, {execute, QueryId, Values, Consistency}).
@@ -512,7 +512,7 @@ prepare_queries([{Name, Query} | Rest],
             {error, Reason}
     end.
 
--spec send_request(iodata(), integer(), state()) -> ok.
+-spec send_request(request(), integer(), state()) -> ok.
 send_request(Body, Stream, #state{socket = Socket,
                                   flags = Flags}) ->
     Frame = erlcql_encode:frame(Body, Flags, Stream),
@@ -649,7 +649,7 @@ send_response(Stream, Response, Pid, #state{async_ets = AsyncETS,
 
 %% Helper functions -----------------------------------------------------------
 
--spec get_env_opt(atom(), proplist()) -> Value :: term().
+-spec get_env_opt(term(), proplist()) -> Value :: term().
 get_env_opt(Opt, Opts) ->
     case lists:keyfind(Opt, 1, Opts) of
         {Opt, Value} ->
@@ -658,11 +658,11 @@ get_env_opt(Opt, Opts) ->
             get_env(Opt)
     end.
 
--spec get_opt(atom(), proplist()) -> Value :: term().
+-spec get_opt(term(), proplist()) -> Value :: term().
 get_opt(Opt, Opts) ->
     get_opt(Opt, Opts, undefined).
 
--spec get_opt(atom(), proplist(), term()) -> Value :: term().
+-spec get_opt(term(), proplist(), term()) -> Value :: term().
 get_opt(Opt, Opts, Default) ->
     case lists:keyfind(Opt, 1, Opts) of
         {Opt, Value} ->
@@ -671,7 +671,7 @@ get_opt(Opt, Opts, Default) ->
             Default
     end.
 
--spec get_env(atom()) -> Value :: term().
+-spec get_env(term()) -> Value :: term().
 get_env(Opt) ->
     case application:get_env(?APP, Opt) of
         {ok, Val} ->
