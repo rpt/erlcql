@@ -410,6 +410,8 @@ apply_funs([Fun | Rest], State) ->
     case Fun(State) of
         {ok, State2} ->
             apply_funs(Rest, State2);
+        {error, {Reason, _, _}} ->
+            {error, Reason};
         {error, _Reason} = Error ->
             Error
     end.
@@ -423,8 +425,8 @@ send_options(#state{cql_version = undefined} = State) ->
             CQLVersion = hd(get_opt(<<"CQL_VERSION">>, Supported)),
             State2 = State#state{cql_version = CQLVersion},
             {ok, State2};
-        {error, {Reason, _, _}} ->
-            {error, Reason}
+        {error, _Reason} = Error ->
+            Error
     end;
 send_options(State) ->
     {ok, State}.
@@ -473,8 +475,8 @@ register_to_events(#state{events = Events} = State) ->
     case wait_for_response(State) of
         ready ->
             {ok, State};
-        {error, {Reason, _, _}} ->
-            {error, Reason}
+        {error, _Reason} = Error ->
+            Error
     end.
 
 -spec use_keyspace(state()) -> {ok, state()} | {error, Reason :: term()}.
@@ -486,8 +488,8 @@ use_keyspace(#state{keyspace = Keyspace} = State) ->
     case wait_for_response(State) of
         {ok, Keyspace} ->
             {ok, State};
-        {error, {Reason, _, _}} ->
-            {error, Reason}
+        {error, _Reason} = Error ->
+            Error
     end.
 
 -spec prepare_queries(state()) -> {ok, state()} | {error, Reason :: term()}.
@@ -508,8 +510,8 @@ prepare_queries([{Name, Query} | Rest],
         {ok, QueryId, Types} ->
             true = ets:insert(PreparedETS, {Name, QueryId, Types}),
             prepare_queries(Rest, State);
-        {error, {Reason, _, _}} ->
-            {error, Reason}
+        {error, _Reason} = Error ->
+            Error
     end.
 
 -spec send_request(request(), integer(), state()) -> ok.
