@@ -289,14 +289,14 @@ ready({_Ref, _}, _From, #state{streams = []} = State) ->
 ready({Ref, {'query', QueryString, Consistency}}, {From, _}, State) ->
     Query = erlcql_encode:'query'(QueryString, Consistency),
     send(Query, {Ref, From}, State);
-ready({Ref, {prepare, QueryString}}, {From, _}, State) ->
-    Prepare = erlcql_encode:prepare(QueryString),
+ready({Ref, {prepare, Query}}, {From, _}, State) ->
+    Prepare = erlcql_encode:prepare(Query),
     send(Prepare, {Ref, From}, State);
-ready({Ref, {prepare, QueryString, Name}}, {From, _},
+ready({Ref, {prepare, Query, Name}}, {From, _},
       #state{prepared_ets = PreparedETS} = State) ->
-    Prepare = erlcql_encode:prepare(QueryString),
+    Prepare = erlcql_encode:prepare(Query),
     Fun = fun({ok, QueryId, Types}) ->
-                  true = ets:insert(PreparedETS, {Name, QueryId, Types}),
+                  true = ets:insert(PreparedETS, {Name, Query, QueryId, Types}),
                   {ok, QueryId};
              ({error, _} = Response) ->
                   Response
@@ -306,18 +306,20 @@ ready({Ref, {execute, QueryId, Values, Consistency}},
       {From, _}, State) when is_binary(QueryId) ->
     Execute = erlcql_encode:execute(QueryId, Values, Consistency),
     send(Execute, {Ref, From}, State);
-ready({Ref, {execute, QueryName, Values, Consistency}}, {From, _},
-      #state{prepared_ets = PreparedETS} = State) when is_atom(QueryName) ->
-    case ets:lookup(PreparedETS, QueryName) of
-        [{QueryName, QueryId, undefined}] ->
+ready({Ref, {execute, Name, Values, Consistency}}, {From, _},
+      #state{prepared_ets = PreparedETS} = State) when is_atom(Name) ->
+    case ets:lookup(PreparedETS, Name) of
+        [{Name, Query, QueryId, undefined}] ->
+            ?DEBUG("Executing ~s: ~s, ~p", [Name, Query, Values]),
             Execute = erlcql_encode:execute(QueryId, Values, Consistency),
             send(Execute, {Ref, From}, State);
-        [{QueryName, QueryId, Types}] ->
+        [{Name, Query, QueryId, Types}] ->
             TypedValues = lists:zip(Types, Values),
+            ?DEBUG("Executing ~s: ~s, ~p", [Name, Query, Values]),
             Execute = erlcql_encode:execute(QueryId, TypedValues, Consistency),
             send(Execute, {Ref, From}, State);
         [] ->
-            ?DEBUG("Execute failed, invalid query name: ~s", [QueryName]),
+            ?DEBUG("Execute failed, invalid query name: ~s", [Name]),
             {reply, {error, invalid_query_name}, ready, State}
     end;
 ready({Ref, options}, {From, _}, State) ->
@@ -508,7 +510,7 @@ prepare_queries([{Name, Query} | Rest],
     ok = send_request(Prepare, 0, State),
     case wait_for_response(State) of
         {ok, QueryId, Types} ->
-            true = ets:insert(PreparedETS, {Name, QueryId, Types}),
+            true = ets:insert(PreparedETS, {Name, Query, QueryId, Types}),
             prepare_queries(Rest, State);
         {error, _Reason} = Error ->
             Error

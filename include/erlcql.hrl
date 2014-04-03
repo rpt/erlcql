@@ -193,14 +193,14 @@
 %%-----------------------------------------------------------------------------
 
 -ifdef(ERLCQL_NO_LOGS).
--define(ERROR(_Format, _Data), ok).
--define(EMERGENCY(_Format, _Data), ok).
--define(ALERT(_Format, _Data), ok).
--define(CRITICAL(_Format, _Data), ok).
--define(WARNING(_Format, _Data), ok).
--define(INFO(_Format, _Data), ok).
--define(NOTICE(_Format, _Data), ok).
--define(DEBUG(_Format, _Data), ok).
+-define(ERROR(Format, Data), begin Format, Data, ok end).
+-define(EMERGENCY(Format, Data), begin Format, Data, ok end).
+-define(ALERT(Format, Data), begin Format, Data, ok end).
+-define(CRITICAL(Format, Data), begin Format, Data, ok end).
+-define(WARNING(Format, Data), begin Format, Data, ok end).
+-define(INFO(Format, Data), begin Format, Data, ok end).
+-define(NOTICE(Format, Data), begin Format, Data, ok end).
+-define(DEBUG(Format, Data), begin Format, Data, ok end).
 -else.
 -ifdef(ERLCQL_LAGER).
 -compile({parse_transform, lager_transform}).
