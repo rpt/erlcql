@@ -22,75 +22,84 @@
 %% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
 -module(erlcql_encode).
 
-%% API
--export([frame/3]).
--export([startup/2,
-         credentials/1,
-         options/0,
-         'query'/2,
-         prepare/1,
-         execute/3,
-         register/1]).
+-export([frame/4]).
+-export([startup/3]).
+-export([credentials/2]).
+-export([options/1]).
+-export(['query'/3]).
+-export([prepare/2]).
+-export([execute/4]).
+-export([register/2]).
 
 -include("erlcql.hrl").
 
-%%-----------------------------------------------------------------------------
-%% API function
-%%-----------------------------------------------------------------------------
+%% API function ---------------------------------------------------------------
 
 %% @doc Encodes the entire request frame.
--spec frame(request(), tuple(), integer()) -> Frame :: iolist().
-frame({Opcode, Payload}, {Compression, _}, Stream) ->
+-spec frame(version(), request(), tuple(), integer()) -> Frame :: iolist().
+frame(V, {Opcode, Payload}, {Compression, _}, Stream) ->
     OpcodeByte = opcode(Opcode),
     {CompressionBit, Payload2} = maybe_compress(Compression, Payload),
     Length = int(iolist_size(Payload2)),
-    [<<?REQUEST:1, ?VERSION:7, 0:7, CompressionBit:1>>,
+    [<<?REQUEST:1, V:7, 0:7, CompressionBit:1>>,
      Stream, OpcodeByte, Length, Payload2].
 
 %% @doc Encodes the startup request message body.
--spec startup(compression(), bitstring()) -> {startup, iolist()}.
-startup(false, CQLVersion) ->
+-spec startup(version(), compression(), bitstring()) -> {startup, iolist()}.
+startup(_V, false, CQLVersion) ->
     {startup, string_map([{<<"CQL_VERSION">>, CQLVersion}])};
-startup(Compression, CQLVersion) ->
+startup(_V, Compression, CQLVersion) ->
     {startup, string_map([{<<"CQL_VERSION">>, CQLVersion},
                           {<<"COMPRESSION">>, compression(Compression)}])}.
 
 %% @doc Encodes the credentials request message body.
--spec credentials([{K :: bitstring(), V :: bitstring()}]) ->
+-spec credentials(version(), [{K :: bitstring(), V :: bitstring()}]) ->
           {credentials, iolist()}.
-credentials(Informations) ->
+credentials(_V, Informations) ->
     {credentials, string_map(Informations)}.
 
 %% @doc Encodes the options request message body.
--spec options() -> {options, iolist()}.
-options() ->
+-spec options(version()) -> {options, iolist()}.
+options(_V) ->
     {options, []}.
 
-%% @doc Encodes the 'query' request message body.
--spec 'query'(iodata(), consistency()) -> {'query', iolist()}.
-'query'(QueryString, Consistency) ->
-    {'query', [long_string(QueryString), consistency(Consistency)]}.
+%% @doc Encodes the query request message body.
+-spec 'query'(version(), iodata(), consistency()) -> {'query', iolist()}.
+'query'(1, QueryString, Consistency) ->
+    {'query', [long_string(QueryString), consistency(Consistency)]};
+'query'(2, QueryString, Consistency) ->
+    %% TODO: Implement support for query flags
+    %%       native_protocol_v2.spec#L292
+    Flags = 0,
+    {'query', [long_string(QueryString), consistency(Consistency), Flags]}.
 
 %% @doc Encodes the prepare request message body.
--spec prepare(iodata()) -> {prepare, iolist()}.
-prepare(QueryString) ->
+-spec prepare(version(), iodata()) -> {prepare, iolist()}.
+prepare(_V, QueryString) ->
     {prepare, [long_string(QueryString)]}.
 
 %% @doc Encodes the execute request message body.
--spec execute(binary(), values(), consistency()) -> {execute, iolist()}.
-execute(QueryId, Values, Consistency) ->
+-spec execute(version(), binary(), values(), consistency()) ->
+          {execute, iolist()}.
+execute(1, QueryId, Values, Consistency) ->
     BinaryValues = erlcql_convert:to_binary(Values),
     {execute, [short_bytes(QueryId), BinaryValues,
-               consistency(Consistency)]}.
+               consistency(Consistency)]};
+execute(2, QueryId, Values, Consistency) ->
+    %% TODO: Implement support for query flags
+    %%       native_protocol_v2.spec#L292
+    %% TODO: Merge with regular query
+    BinaryValues = erlcql_convert:to_binary(Values),
+    Flags = 1,
+    {execute, [short_bytes(QueryId), consistency(Consistency),
+               Flags, BinaryValues]}.
 
 %% @doc Encodes the register request message body.
--spec register([event_type()]) -> {register, iolist()}.
-register(Events) ->
+-spec register(version(), [event_type()]) -> {register, iolist()}.
+register(_V, Events) ->
     {register, event_list(Events)}.
 
-%%-----------------------------------------------------------------------------
-%% Encode functions
-%%-----------------------------------------------------------------------------
+%% Encode functions -----------------------------------------------------------
 
 -spec int(integer()) -> binary().
 int(X) ->
@@ -149,10 +158,6 @@ event(schema_change) -> <<"SCHEMA_CHANGE">>.
 event_list(Events) ->
     N = length(Events),
     [short(N) | [string2(event(Event)) || Event <- Events]].
-
-%%-----------------------------------------------------------------------------
-%% Internal functions
-%%-----------------------------------------------------------------------------
 
 %% @doc Compresses the payload if compression is enabled.
 -spec maybe_compress(compression(), iolist()) -> {0 | 1, iolist()}.

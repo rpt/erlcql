@@ -104,4 +104,5 @@ default(use) -> undefined;
 default(prepare) -> [];
 default(reconnect_start) -> 1000;
 default(reconnect_max) -> 30000;
-default(keepalive) -> false. 
+default(keepalive) -> false;
+default(version) -> 2.

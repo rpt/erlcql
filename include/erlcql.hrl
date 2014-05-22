@@ -21,7 +21,8 @@
 %% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
 
 -define(APP, erlcql).
--define(VERSION, 1).
+
+-type version() :: 1 | 2.
 
 %% Directions
 -define(REQUEST, 0).

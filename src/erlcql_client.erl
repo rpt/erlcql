@@ -64,7 +64,8 @@
           prepare :: [{Name :: atom(), Query :: iodata()}],
           prepared_ets :: ets(),
           socket :: undefined | socket(),
-          streams = lists:seq(1, 127) :: [integer()]
+          streams = lists:seq(1, 127) :: [integer()],
+          version :: version()
          }).
 -type state() :: #state{}.
 
@@ -208,6 +209,7 @@ init_state(Opts) ->
     Parser = erlcql_decode:new_parser(),
     Prepare = get_env_opt(prepare, Opts),
     PreparedETS = maybe_create_prepared_ets(Opts),
+    Version = get_env_opt(version, Opts),
     #state{async_ets = AsyncETS,
            auto_reconnect = AutoReconnect,
            backoff = Backoff,
@@ -222,7 +224,8 @@ init_state(Opts) ->
            parent = Parent,
            parser = Parser,
            prepare = Prepare,
-           prepared_ets = PreparedETS}.
+           prepared_ets = PreparedETS,
+           version = Version}.
 
 %% State: startup -------------------------------------------------------------
 
@@ -286,47 +289,55 @@ ready(Event, State) ->
 ready({_Ref, _}, _From, #state{streams = []} = State) ->
     ?CRITICAL("Too many requests!"),
     {reply, {error, too_many_requests}, ready, State};
-ready({Ref, {'query', QueryString, Consistency}}, {From, _}, State) ->
-    Query = erlcql_encode:'query'(QueryString, Consistency),
+ready({Ref, {'query', QueryString, Consistency}}, {From, _},
+      #state{version = Version} = State) ->
+    Query = erlcql_encode:'query'(Version, QueryString, Consistency),
     send(Query, {Ref, From}, State);
-ready({Ref, {prepare, Query}}, {From, _}, State) ->
-    Prepare = erlcql_encode:prepare(Query),
+ready({Ref, {prepare, Query}}, {From, _},
+      #state{version = Version} = State) ->
+    Prepare = erlcql_encode:prepare(Version, Query),
     send(Prepare, {Ref, From}, State);
 ready({Ref, {prepare, Query, Name}}, {From, _},
-      #state{prepared_ets = PreparedETS} = State) ->
-    Prepare = erlcql_encode:prepare(Query),
-    Fun = fun({ok, QueryId, Types}) ->
+      #state{prepared_ets = PreparedETS,
+             version = Version} = State) ->
+    Prepare = erlcql_encode:prepare(Version, Query),
+    Fun = fun({ok, QueryId, {ReqSpecs, _}} = Response) ->
+                  {_, Types} = lists:unzip(ReqSpecs),
                   true = ets:insert(PreparedETS, {Name, Query, QueryId, Types}),
-                  {ok, QueryId};
+                  Response;
              ({error, _} = Response) ->
                   Response
           end,
     send(Prepare, {Ref, From, Fun}, State);
-ready({Ref, {execute, QueryId, Values, Consistency}},
-      {From, _}, State) when is_binary(QueryId) ->
-    Execute = erlcql_encode:execute(QueryId, Values, Consistency),
+ready({Ref, {execute, QueryId, Values, Consistency}}, {From, _},
+      #state{version = Version} = State) when is_binary(QueryId) ->
+    Execute = erlcql_encode:execute(Version, QueryId, Values, Consistency),
     send(Execute, {Ref, From}, State);
 ready({Ref, {execute, Name, Values, Consistency}}, {From, _},
-      #state{prepared_ets = PreparedETS} = State) when is_atom(Name) ->
+      #state{prepared_ets = PreparedETS,
+             version = Version} = State) when is_atom(Name) ->
     case ets:lookup(PreparedETS, Name) of
         [{Name, Query, QueryId, undefined}] ->
             ?DEBUG("Executing ~s: ~s, ~p", [Name, Query, Values]),
-            Execute = erlcql_encode:execute(QueryId, Values, Consistency),
+            Execute = erlcql_encode:execute(Version, QueryId,
+                                            Values, Consistency),
             send(Execute, {Ref, From}, State);
         [{Name, Query, QueryId, Types}] ->
             TypedValues = lists:zip(Types, Values),
             ?DEBUG("Executing ~s: ~s, ~p", [Name, Query, Values]),
-            Execute = erlcql_encode:execute(QueryId, TypedValues, Consistency),
+            Execute = erlcql_encode:execute(Version, QueryId,
+                                            TypedValues, Consistency),
             send(Execute, {Ref, From}, State);
         [] ->
             ?DEBUG("Execute failed, invalid query name: ~s", [Name]),
             {reply, {error, invalid_query_name}, ready, State}
     end;
-ready({Ref, options}, {From, _}, State) ->
-    Options = erlcql_encode:options(),
+ready({Ref, options}, {From, _}, #state{version = Version} = State) ->
+    Options = erlcql_encode:options(Version),
     send(Options, {Ref, From}, State);
-ready({Ref, {register, Events}}, {From, _}, State) ->
-    Register = erlcql_encode:register(Events),
+ready({Ref, {register, Events}}, {From, _},
+      #state{version = Version} = State) ->
+    Register = erlcql_encode:register(Version, Events),
     send(Register, {Ref, From}, State);
 ready(Event, _From, State) ->
     ?ERROR("Bad event (ready/sync): ~p", [Event]),
@@ -419,8 +430,9 @@ apply_funs([Fun | Rest], State) ->
     end.
 
 -spec send_options(state()) -> {ok, state()} | {error, Reason :: term()}.
-send_options(#state{cql_version = undefined} = State) ->
-    Options = erlcql_encode:options(),
+send_options(#state{cql_version = undefined,
+                    version = Version} = State) ->
+    Options = erlcql_encode:options(Version),
     ok = send_request(Options, 0, State),
     case wait_for_response(State) of
         {ok, Supported} ->
@@ -435,8 +447,9 @@ send_options(State) ->
 
 -spec send_startup(state()) -> {ok, state()} | {error, Reason :: term()}.
 send_startup(#state{flags = {Compression, Tracing},
-                    cql_version = CQLVersion} = State) ->
-    Startup = erlcql_encode:startup(Compression, CQLVersion),
+                    cql_version = CQLVersion,
+                    version = Version} = State) ->
+    Startup = erlcql_encode:startup(Version, Compression, CQLVersion),
     ok = send_request(Startup, 0, State#state{flags = {false, Tracing}}),
     wait_for_ready(State).
 
@@ -458,10 +471,11 @@ wait_for_ready(State) ->
 
 -spec try_auth(bitstring(), state()) -> ok | {error, term()}.
 try_auth(<<"org.apache.cassandra.auth.PasswordAuthenticator">>,
-         #state{credentials = {Username, Password}} = State) ->
+         #state{credentials = {Username, Password},
+                version = Version} = State) ->
     Map = [{<<"username">>, Username},
            {<<"password">>, Password}],
-    Credentials = erlcql_encode:credentials(Map),
+    Credentials = erlcql_encode:credentials(Version, Map),
     ok = send_request(Credentials, 0, State);
 try_auth(Other, _State) ->
     {error, {unknown_auth_class, Other}}.
@@ -471,8 +485,9 @@ register_to_events(#state{events = undefined} = State) ->
     {ok, State};
 register_to_events(#state{events = []} = State) ->
     {ok, State};
-register_to_events(#state{events = Events} = State) ->
-    Register = erlcql_encode:register(Events),
+register_to_events(#state{events = Events,
+                          version = Version} = State) ->
+    Register = erlcql_encode:register(Version, Events),
     ok = send_request(Register, 0, State),
     case wait_for_response(State) of
         ready ->
@@ -484,8 +499,9 @@ register_to_events(#state{events = Events} = State) ->
 -spec use_keyspace(state()) -> {ok, state()} | {error, Reason :: term()}.
 use_keyspace(#state{keyspace = undefined} = State) ->
     {ok, State};
-use_keyspace(#state{keyspace = Keyspace} = State) ->
-    Use = erlcql_encode:'query'([<<"USE ">>, Keyspace], any),
+use_keyspace(#state{keyspace = Keyspace,
+                    version = Version} = State) ->
+    Use = erlcql_encode:'query'(Version, [<<"USE ">>, Keyspace], any),
     ok = send_request(Use, 0, State),
     case wait_for_response(State) of
         {ok, Keyspace} ->
@@ -505,11 +521,13 @@ prepare_queries(#state{prepare = Queries} = State) ->
 prepare_queries([], State) ->
     {ok, State};
 prepare_queries([{Name, Query} | Rest],
-                #state{prepared_ets = PreparedETS} = State) ->
-    Prepare = erlcql_encode:prepare(Query),
+                #state{prepared_ets = PreparedETS,
+                       version = Version} = State) ->
+    Prepare = erlcql_encode:prepare(Version, Query),
     ok = send_request(Prepare, 0, State),
     case wait_for_response(State) of
-        {ok, QueryId, Types} ->
+        {ok, QueryId, {ReqSpecs, _}} ->
+            {_, Types} = lists:unzip(ReqSpecs),
             true = ets:insert(PreparedETS, {Name, Query, QueryId, Types}),
             prepare_queries(Rest, State);
         {error, _Reason} = Error ->
@@ -518,8 +536,9 @@ prepare_queries([{Name, Query} | Rest],
 
 -spec send_request(request(), integer(), state()) -> ok.
 send_request(Body, Stream, #state{socket = Socket,
-                                  flags = Flags}) ->
-    Frame = erlcql_encode:frame(Body, Flags, Stream),
+                                  flags = Flags,
+                                  version = Version}) ->
+    Frame = erlcql_encode:frame(Version, Body, Flags, Stream),
     ok = gen_tcp:send(Socket, Frame).
 
 -spec wait_for_response(state()) ->

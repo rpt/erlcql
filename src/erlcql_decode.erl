@@ -22,19 +22,15 @@
 %% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
 -module(erlcql_decode).
 
-%% API
--export([new_parser/0,
-         parse/3]).
-
+-export([new_parser/0]).
+-export([parse/3]).
 -export([decode/2]).
 
 -include("erlcql.hrl").
 
 -define(STRING(Length), Length/bytes).
 
-%%-----------------------------------------------------------------------------
-%% API functions
-%%-----------------------------------------------------------------------------
+%% API functions --------------------------------------------------------------
 
 %% @doc Returns a new parser.
 -spec new_parser() -> parser().
@@ -52,9 +48,7 @@ parse(Data, #parser{buffer = Buffer} = Parser, Compression) ->
     NewParser = Parser#parser{buffer = NewBuffer},
     parse_loop(NewParser, Compression, []).
 
-%%-----------------------------------------------------------------------------
-%% Parser functions
-%%-----------------------------------------------------------------------------
+%% Parser functions -----------------------------------------------------------
 
 -spec parse_loop(parser(), compression(), [{integer(), response()}]) ->
           {ok, Responses :: [{Stream :: integer(),
@@ -100,14 +94,12 @@ run_decode(#parser{buffer = Buffer} = Parser, Compression) ->
             {error, Other}
     end.
 
-%%-----------------------------------------------------------------------------
-%% Decode functions
-%%-----------------------------------------------------------------------------
+%% Decode functions -----------------------------------------------------------
 
 -spec decode(binary(), compression()) ->
           {ok, Stream :: integer(), Response :: response(), Rest :: binary()} |
           {error, Reason :: term()}.
-decode(<<?RESPONSE:1, ?VERSION:7, _Flags:7, Decompress:1,
+decode(<<?RESPONSE:1, _:7, _Flags:7, Decompress:1,
          Stream:8/signed, Opcode:8, Length:32, Data:Length/binary,
          Rest/binary>>, Compression) ->
     Data2 = maybe_decompress(Decompress, Compression, Data),
@@ -146,8 +138,6 @@ opcode(16#03) -> authenticate;
 opcode(16#06) -> supported;
 opcode(16#08) -> result;
 opcode(16#0c) -> event.
-
-%% Error ----------------------------------------------------------------------
 
 -spec error2(binary()) -> cql_error().
 error2(<<ErrorCode:?INT, Data/binary>>) ->
@@ -244,19 +234,13 @@ consistency(5) -> all;
 consistency(6) -> local_quorum;
 consistency(7) -> each_quorum.
 
-%% Ready ----------------------------------------------------------------------
-
 -spec ready(binary()) -> ready.
 ready(<<>>) ->
     ready.
 
-%% Authenticate ---------------------------------------------------------------
-
 -spec authenticate(binary()) -> authenticate().
 authenticate(<<Length:?SHORT, AuthClass:?STRING(Length)>>) ->
     {authenticate, AuthClass}.
-
-%% Supported ------------------------------------------------------------------
 
 -spec supported(binary()) -> supported().
 supported(<<N:?SHORT, Data/binary>>) ->
@@ -280,8 +264,6 @@ supported_list(N, <<Length:?SHORT, Value:Length/binary,
                     Rest/binary>>, Values) ->
     supported_list(N - 1, Rest, [Value | Values]).
 
-%% Result ---------------------------------------------------------------------
-
 -spec result(binary()) -> result().
 result(<<Kind:?INT, Data/binary>>) ->
     case result_kind(Kind) of
@@ -304,13 +286,9 @@ result_kind(16#0003) -> set_keyspace;
 result_kind(16#0004) -> prepared;
 result_kind(16#0005) -> schema_change.
 
-%% Result: Void
-
 -spec void(binary()) -> void().
 void(<<>>) ->
     {ok, void}.
-
-%% Result: Rows
 
 -spec rows(binary()) -> rows().
 rows(Data) ->
@@ -321,6 +299,9 @@ rows(Data) ->
     {ok, {Rows, ColumnSpecs}}.
 
 -spec metadata(binary()) -> {integer(), column_specs(), Rest :: binary()}.
+metadata(<<_:29, 0:1, _:2, 0:?INT, Rest/binary>>) ->
+    %% NEW: no_metadata
+    {0, [], Rest};
 metadata(<<_:31, 0:1, ColumnCount:?INT, ColumnData/binary>>) ->
     {ColumnSpecs, Rest} = column_specs(false, ColumnCount, ColumnData, []),
     {ColumnCount, ColumnSpecs, Rest};
@@ -410,29 +391,22 @@ row_values(N, [Type | Types], <<Length:?INT, Value:Length/binary,
     Value2 = erlcql_convert:from_binary(Type, Value),
     row_values(N - 1, Types, Rest, [Value2 | Values]).
 
-%% Result: Set keyspace
-
 -spec set_keyspace(binary()) -> set_keyspace().
 set_keyspace(<<Length:?SHORT, Keyspace:Length/binary>>) ->
     {ok, Keyspace}.
 
-%% Result: Prepared
-
 -spec prepared(binary()) -> {ok, bitstring(), [option()]}.
 prepared(<<Length:?SHORT, QueryId:Length/binary, Metadata/binary>>) ->
-    {_ColumnCount, ColumnSpecs, <<>>} = metadata(Metadata),
-    {_, ColumnTypes} = lists:unzip(ColumnSpecs),
-    {ok, QueryId, ColumnTypes}.
-
-%% Result: Schema change
+    {_ColumnCount, ColumnSpecs, ResultMetadata} = metadata(Metadata),
+    %% {_, ColumnTypes} = lists:unzip(ColumnSpecs),
+    {_, ResultSpecs, <<>>} = metadata(ResultMetadata), %% NEW: result_metadata
+    {ok, QueryId, {ColumnSpecs, ResultSpecs}}.
 
 -spec schema_change(binary()) -> schema_change().
 schema_change(<<Length:?SHORT, Type:Length/binary,
                 Length2:?SHORT, _Keyspace:Length2/binary,
                 Length3:?SHORT, _Table:Length3/binary>>) ->
     {ok, schema_change_type(Type)}.
-
-%% Event ----------------------------------------------------------------------
 
 -spec event(binary()) -> event_res().
 event(<<Length:?SHORT, Type:?STRING(Length), Data/binary>>) ->
