@@ -5,7 +5,7 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("proper/include/proper.hrl").
 
--define(OPTS, [{cql_version, <<"3.0.0">>}]).
+-define(OPTS, [{version, 1}]).
 -define(KEYSPACE, <<"erlcql_tests">>).
 
 -define(CREATE_KEYSPACE, <<"CREATE KEYSPACE IF NOT EXISTS erlcql_tests ",

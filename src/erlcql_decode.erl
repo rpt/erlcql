@@ -115,7 +115,11 @@ decode(<<?RESPONSE:1, _:7, _Flags:7, Decompress:1,
                    result ->
                        result(Data2);
                    event ->
-                       event(Data2)
+                       event(Data2);
+                   auth_challenge ->
+                       auth_challenge(Data2);
+                   auth_success ->
+                       auth_success(Data2)
                end,
     {ok, Stream, Response, Rest};
 decode(_Other, _Compression) ->
@@ -137,7 +141,9 @@ opcode(16#02) -> ready;
 opcode(16#03) -> authenticate;
 opcode(16#06) -> supported;
 opcode(16#08) -> result;
-opcode(16#0c) -> event.
+opcode(16#0c) -> event;
+opcode(16#0e) -> auth_challenge;
+opcode(16#10) -> auth_success.
 
 -spec error2(binary()) -> cql_error().
 error2(<<ErrorCode:?INT, Data/binary>>) ->
@@ -466,3 +472,10 @@ inet(4, <<A:8, B:8, C:8, D:8, Port:?INT>>) ->
 inet(16, <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16, Port:?INT>>) ->
     {{A, B, C, D, E, F, G, H}, Port}.
 
+-spec auth_challenge(binary()) -> {auth_challenge, binary()}.
+auth_challenge(<<Length:?INT, Token:Length/binary>>) ->
+    {auth_challenge, Token}.
+
+-spec auth_success(binary()) -> {auth_success, binary()}.
+auth_success(<<Length:?INT, Token:Length/binary>>) ->
+    {auth_success, Token}.

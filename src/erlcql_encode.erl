@@ -30,6 +30,7 @@
 -export([prepare/2]).
 -export([execute/4]).
 -export([register/2]).
+-export([auth_response/2]).
 
 -include("erlcql.hrl").
 
@@ -55,7 +56,7 @@ startup(_V, Compression, CQLVersion) ->
 %% @doc Encodes the credentials request message body.
 -spec credentials(version(), [{K :: bitstring(), V :: bitstring()}]) ->
           {credentials, iolist()}.
-credentials(_V, Informations) ->
+credentials(1, Informations) ->
     {credentials, string_map(Informations)}.
 
 %% @doc Encodes the options request message body.
@@ -66,12 +67,13 @@ options(_V) ->
 %% @doc Encodes the query request message body.
 -spec 'query'(version(), iodata(), consistency()) -> {'query', iolist()}.
 'query'(1, QueryString, Consistency) ->
-    {'query', [long_string(QueryString), consistency(Consistency)]};
+    {'query', [long_string(QueryString), short(consistency(Consistency))]};
 'query'(2, QueryString, Consistency) ->
     %% TODO: Implement support for query flags
     %%       native_protocol_v2.spec#L292
     Flags = 0,
-    {'query', [long_string(QueryString), consistency(Consistency), Flags]}.
+    {'query', [long_string(QueryString),
+               short(consistency(Consistency)), Flags]}.
 
 %% @doc Encodes the prepare request message body.
 -spec prepare(version(), iodata()) -> {prepare, iolist()}.
@@ -84,20 +86,24 @@ prepare(_V, QueryString) ->
 execute(1, QueryId, Values, Consistency) ->
     BinaryValues = erlcql_convert:to_binary(Values),
     {execute, [short_bytes(QueryId), BinaryValues,
-               consistency(Consistency)]};
+               short(consistency(Consistency))]};
 execute(2, QueryId, Values, Consistency) ->
     %% TODO: Implement support for query flags
     %%       native_protocol_v2.spec#L292
     %% TODO: Merge with regular query
     BinaryValues = erlcql_convert:to_binary(Values),
     Flags = 1,
-    {execute, [short_bytes(QueryId), consistency(Consistency),
+    {execute, [short_bytes(QueryId), short(consistency(Consistency)),
                Flags, BinaryValues]}.
 
 %% @doc Encodes the register request message body.
 -spec register(version(), [event_type()]) -> {register, iolist()}.
 register(_V, Events) ->
     {register, event_list(Events)}.
+
+-spec auth_response(version(), binary()) -> {auth_response, iolist()}.
+auth_response(2, Token) ->
+    {auth_response, [bytes(Token)]}.
 
 %% Encode functions -----------------------------------------------------------
 
@@ -119,6 +125,11 @@ long_string(String) ->
     Length = iolist_size(String),
     [int(Length), String].
 
+-spec bytes(binary()) -> iolist().
+bytes(Bytes) ->
+    Length = iolist_size(Bytes),
+    [int(Length), Bytes].
+
 -spec short_bytes(binary()) -> iolist().
 short_bytes(Bytes) ->
     Length = iolist_size(Bytes),
@@ -131,28 +142,32 @@ string_map(KeyValues) ->
                  || {Key, Value} <- KeyValues]].
 
 -spec opcode(atom()) -> integer().
-opcode(startup) -> 1;
-opcode(credentials) -> 4;
-opcode(options) -> 5;
-opcode('query') -> 7;
-opcode(prepare) -> 9;
-opcode(execute) -> 10;
-opcode(register) -> 11.
+opcode(startup)       -> 16#01;
+opcode(credentials)   -> 16#04;
+opcode(options)       -> 16#05;
+opcode('query')       -> 16#07;
+opcode(prepare)       -> 16#09;
+opcode(execute)       -> 16#0a;
+opcode(register)      -> 16#0b;
+opcode(auth_response) -> 16#0f.
 
--spec consistency(consistency()) -> binary().
-consistency(any) -> short(0);
-consistency(one) -> short(1);
-consistency(two) -> short(2);
-consistency(three) -> short(3);
-consistency(quorum) -> short(4);
-consistency(all) -> short(5);
-consistency(local_quorum) -> short(6);
-consistency(each_quorum) -> short(7).
+-spec consistency(consistency()) -> integer().
+consistency(any)          -> 16#00;
+consistency(one)          -> 16#01;
+consistency(two)          -> 16#02;
+consistency(three)        -> 16#03;
+consistency(quorum)       -> 16#04;
+consistency(all)          -> 16#05;
+consistency(local_quorum) -> 16#06;
+consistency(each_quorum)  -> 16#07;
+consistency(serial)       -> 16#08;
+consistency(local_serial) -> 16#09;
+consistency(local_one)    -> 16#0a.
 
 -spec event(event_type()) -> bitstring().
 event(topology_change) -> <<"TOPOLOGY_CHANGE">>;
-event(status_change) -> <<"STATUS_CHANGE">>;
-event(schema_change) -> <<"SCHEMA_CHANGE">>.
+event(status_change)   -> <<"STATUS_CHANGE">>;
+event(schema_change)   -> <<"SCHEMA_CHANGE">>.
 
 -spec event_list([event_type()]) -> iolist().
 event_list(Events) ->
@@ -176,4 +191,4 @@ maybe_compress(lz4, Payload) ->
 
 -spec compression(compression()) -> bitstring().
 compression(snappy) -> <<"snappy">>;
-compression(lz4) -> <<"lz4">>.
+compression(lz4)    -> <<"lz4">>.
