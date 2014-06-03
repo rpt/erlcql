@@ -38,7 +38,8 @@
 %% Parser
 -record(parser, {
           buffer = <<>> :: binary(),
-          length :: pos_integer()
+          length :: pos_integer(),
+          version :: version()
          }).
 -type parser() :: #parser{}.
 

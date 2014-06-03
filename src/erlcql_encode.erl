@@ -34,6 +34,8 @@
 
 -include("erlcql.hrl").
 
+-type query_parameters() :: [{atom(), term()}].
+
 %% API function ---------------------------------------------------------------
 
 %% @doc Encodes the entire request frame.
@@ -65,15 +67,54 @@ options(_V) ->
     {options, []}.
 
 %% @doc Encodes the query request message body.
--spec 'query'(version(), iodata(), consistency()) -> {'query', iolist()}.
-'query'(1, QueryString, Consistency) ->
-    {'query', [long_string(QueryString), short(consistency(Consistency))]};
-'query'(2, QueryString, Consistency) ->
-    %% TODO: Implement support for query flags
-    %%       native_protocol_v2.spec#L292
-    Flags = 0,
+-spec 'query'(version(), iodata(), query_parameters()) ->
+          {'query', iolist()}.
+'query'(1, QueryString, Params) ->
+    Consistency = erlcql_client:get_env_opt(consistency, Params),
     {'query', [long_string(QueryString),
-               short(consistency(Consistency)), Flags]}.
+               short(consistency(Consistency))]};
+'query'(2, QueryString, Params) ->
+    Consistency = erlcql_client:get_env_opt(consistency, Params),
+    Params2 = [{values, []},
+               {skip_metadata, false} | Params],
+    {'query', [long_string(QueryString), short(consistency(Consistency)),
+               query_parameters(Params2)]}.
+
+query_parameters(Params) ->
+    Flags = [{values,
+              fun([])     -> false;
+                 (Values) -> erlcql_convert:to_binary(Values) end},
+             {skip_metadata, fun(Skip) -> Skip end},
+             {page_size,
+              fun(undefined) -> false;
+                 (PageSize)  -> int(PageSize) end},
+             {paging_state,
+              fun(undefined)   -> false;
+                 (PagingState) -> bytes(PagingState) end},
+             {serial_consistency,
+              fun(undefined)   -> false;
+                 (Consistency) -> short(consistency(Consistency)) end}],
+    Params2 = [{Flag, Fun(proplists:get_value(Flag, Params))}
+               || {Flag, Fun} <- Flags],
+    process_flags(Params2, fun query_flag/1).
+
+process_flags(Params, BitFun) ->
+    P = fun({_Name, false}, {S, B}) ->
+                {S, B};
+           ({Name, true}, {S, B}) ->
+                {S + BitFun(Name), B};
+           ({Name, Value}, {S, B}) ->
+                {S + BitFun(Name), [Value | B]}
+        end,
+    {Flags, Body} = lists:foldl(P, {0, []}, Params),
+    [Flags, lists:reverse(Body)].
+
+-spec query_flag(atom()) -> integer().
+query_flag(values)             -> 16#01;
+query_flag(skip_metadata)      -> 16#02;
+query_flag(page_size)          -> 16#04;
+query_flag(paging_state)       -> 16#08;
+query_flag(serial_consistency) -> 16#10.
 
 %% @doc Encodes the prepare request message body.
 -spec prepare(version(), iodata()) -> {prepare, iolist()}.
@@ -87,14 +128,12 @@ execute(1, QueryId, Values, Consistency) ->
     BinaryValues = erlcql_convert:to_binary(Values),
     {execute, [short_bytes(QueryId), BinaryValues,
                short(consistency(Consistency))]};
-execute(2, QueryId, Values, Consistency) ->
-    %% TODO: Implement support for query flags
-    %%       native_protocol_v2.spec#L292
-    %% TODO: Merge with regular query
-    BinaryValues = erlcql_convert:to_binary(Values),
-    Flags = 1,
+execute(2, QueryId, Values, Params) ->
+    Consistency = erlcql_client:get_env_opt(consistency, Params),
+    Params2 = [{values, Values},
+               {skip_metadata, false} | Params],
     {execute, [short_bytes(QueryId), short(consistency(Consistency)),
-               Flags, BinaryValues]}.
+               query_parameters(Params2)]}.
 
 %% @doc Encodes the register request message body.
 -spec register(version(), [event_type()]) -> {register, iolist()}.

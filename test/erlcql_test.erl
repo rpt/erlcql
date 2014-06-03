@@ -4,7 +4,7 @@
 
 -define(CQL_VERSION, <<"3.0.0">>).
 -define(OPTS, [{cql_version, ?CQL_VERSION}]).
--define(CONSISTENCY, quorum).
+-define(CONSISTENCY, [{consistency, quorum}]).
 
 -spec create_keyspace() -> Keyspace :: bitstring().
 create_keyspace() ->

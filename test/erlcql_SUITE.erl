@@ -5,7 +5,7 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("proper/include/proper.hrl").
 
--define(OPTS, [{version, 1}]).
+-define(OPTS, []).
 -define(KEYSPACE, <<"erlcql_tests">>).
 
 -define(CREATE_KEYSPACE, <<"CREATE KEYSPACE IF NOT EXISTS erlcql_tests ",
@@ -19,8 +19,6 @@
 
 -define(PROPTEST(A), true = proper:quickcheck(A())).
 -define(PROPTEST(A, Args), true = proper:quickcheck(A(Args), {numtests, 1000})).
-
--import(erlcql, [q/2, q/3]).
 
 %% Fixtures -------------------------------------------------------------------
 
@@ -179,7 +177,9 @@ insert(Config) ->
     Pid = get_pid(Config),
     {ok, void} = q(Pid, <<"INSERT INTO t (k, v) VALUES (1, 'one')">>),
     Rows = q(Pid, <<"SELECT * FROM t">>, one),
-    {ok, {[[1, <<"one">>]], [{<<"k">>, int}, {<<"v">>, varchar}]}} = Rows.
+    {ok, {[[1, <<"one">>]], Metadata}} = Rows,
+    [<<"k">>, <<"v">>] = proplists:get_value(columns, Metadata),
+    [int, varchar] = proplists:get_value(types, Metadata).
 
 %% Client tests
 
@@ -201,6 +201,11 @@ start_with_use(_Config) ->
 
 get_pid(Config) ->
     proplists:get_value(pid, Config).
+
+q(Pid, Query) -> q(Pid, Query, one).
+
+q(Pid, Query, Consistency) ->
+    erlcql_client:'query'(Pid, Query, [{consistency, Consistency}]).
 
 get_keyspaces(Pid) ->
     Check = <<"SELECT keyspace_name FROM system.schema_keyspaces">>,
@@ -233,7 +238,9 @@ get_value(Pid, <<"map<varchar, boolean>">>) ->
     get_value(Pid, {map, varchar, boolean});
 get_value(Pid, Type) ->
     Res = q(Pid, <<"SELECT v FROM erlcql_tests.t">>, one),
-    {ok, {[[Value]], [{<<"v">>, Type}]}} = Res,
+    {ok, {[[Value]], Metadata}} = Res,
+    [<<"v">>] = proplists:get_value(columns, Metadata),
+    [Type] = proplists:get_value(types, Metadata),
     Value.
 
 clean_type_table(TestCase, Config) ->

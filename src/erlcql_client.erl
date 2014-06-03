@@ -23,15 +23,22 @@
 -module(erlcql_client).
 -behaviour(gen_fsm).
 
-%% API
 -export([start_link/1]).
--export(['query'/3, async_query/3,
-         execute/4, async_execute/4]).
--export([prepare/2, prepare/3,
-         options/1,
-         register/2]).
--export([await/1,
-         await/2]).
+
+-export(['query'/3]).
+-export([execute/4]).
+
+-export([prepare/2]).
+-export([prepare/3]).
+-export([options/1]).
+-export([register/2]).
+
+-export([async_query/3]).
+-export([async_execute/4]).
+-export([await/1]).
+-export([await/2]).
+
+-export([get_env_opt/2]).
 
 %% gen_fsm callbacks
 -export([init/1,
@@ -98,8 +105,8 @@ start_link(Opts) ->
 
 -spec 'query'(pid(), iodata(), consistency()) ->
           result() | {error, Reason :: term()}.
-'query'(Pid, QueryString, Consistency) ->
-    async_call(Pid, {'query', QueryString, Consistency}).
+'query'(Pid, QueryString, Params) ->
+    async_call(Pid, {'query', QueryString, Params}).
 
 -spec prepare(pid(), iodata()) -> prepared() | {error, Reason :: term()}.
 prepare(Pid, QueryString) ->
@@ -126,8 +133,8 @@ register(Pid, Events) ->
 
 -spec async_query(pid(), iodata(), consistency()) ->
           {ok, QueryRef :: erlcql:query_ref()} | {error, Reason :: term()}.
-async_query(Pid, QueryString, Consistency) ->
-    cast(Pid, {'query', QueryString, Consistency}).
+async_query(Pid, QueryString, Params) ->
+    cast(Pid, {'query', QueryString, Params}).
 
 -spec async_execute(pid(), erlcql:uuid() | atom(), values(), consistency()) ->
           {ok, QueryRef :: erlcql:query_ref()} | {error, Reason :: term()}.
@@ -198,18 +205,18 @@ init_state(Opts) ->
     Host = get_env_opt(host, Opts),
     Port = get_env_opt(port, Opts),
     Database = {Host, Port},
-    EventFun = get_opt(event_fun, Opts),
+    EventFun = get_internal_opt(event_fun, Opts),
     Events = get_env_opt(register, Opts),
     Compression = get_env_opt(compression, Opts),
     Tracing = get_env_opt(tracing, Opts),
     Flags = {Compression, Tracing},
     Keepalive = get_env_opt(keepalive, Opts),
     Keyspace = get_env_opt(use, Opts),
-    Parent = get_opt(parent, Opts),
-    Parser = erlcql_decode:new_parser(),
+    Parent = get_internal_opt(parent, Opts),
     Prepare = get_env_opt(prepare, Opts),
     PreparedETS = maybe_create_prepared_ets(Opts),
     Version = get_env_opt(version, Opts),
+    Parser = erlcql_decode:new_parser(Version),
     #state{async_ets = AsyncETS,
            auto_reconnect = AutoReconnect,
            backoff = Backoff,
@@ -289,9 +296,9 @@ ready(Event, State) ->
 ready({_Ref, _}, _From, #state{streams = []} = State) ->
     ?CRITICAL("Too many requests!"),
     {reply, {error, too_many_requests}, ready, State};
-ready({Ref, {'query', QueryString, Consistency}}, {From, _},
+ready({Ref, {'query', QueryString, Params}}, {From, _},
       #state{version = Version} = State) ->
-    Query = erlcql_encode:'query'(Version, QueryString, Consistency),
+    Query = erlcql_encode:'query'(Version, QueryString, Params),
     send(Query, {Ref, From}, State);
 ready({Ref, {prepare, Query}}, {From, _},
       #state{version = Version} = State) ->
@@ -301,9 +308,10 @@ ready({Ref, {prepare, Query, Name}}, {From, _},
       #state{prepared_ets = PreparedETS,
              version = Version} = State) ->
     Prepare = erlcql_encode:prepare(Version, Query),
-    Fun = fun({ok, QueryId, {ReqSpecs, _}} = Response) ->
-                  {_, Types} = lists:unzip(ReqSpecs),
-                  true = ets:insert(PreparedETS, {Name, Query, QueryId, Types}),
+    Fun = fun({ok, {QueryId, RequestMetadata, _ResultMetadata}} = Response) ->
+                  Types = proplists:get_value(types, RequestMetadata),
+                  Entry = {Name, Query, QueryId, Types},
+                  true = ets:insert(PreparedETS, Entry),
                   Response;
              ({error, _} = Response) ->
                   Response
@@ -394,12 +402,8 @@ terminate(_Reason, _StateName, #state{socket = Socket}) ->
 
 -spec maybe_create_prepared_ets(proplist()) -> ets().
 maybe_create_prepared_ets(Opts) ->
-   case get_opt(prepared_statements_ets_tid, Opts) of
-       undefined ->
-           ets:new(?PREPARED_ETS_NAME, ?PREPARED_ETS_OPTS);
-       Tid ->
-           Tid
-   end.
+    New = fun() -> ets:new(?PREPARED_ETS_NAME, ?PREPARED_ETS_OPTS) end,
+    get_opt(prepared_statements_ets_tid, Opts, New).
 
 -spec event_fun(event_fun() | pid()) -> event_fun().
 event_fun(Fun) when is_function(Fun) ->
@@ -501,7 +505,8 @@ use_keyspace(#state{keyspace = undefined} = State) ->
     {ok, State};
 use_keyspace(#state{keyspace = Keyspace,
                     version = Version} = State) ->
-    Use = erlcql_encode:'query'(Version, [<<"USE ">>, Keyspace], any),
+    Use = erlcql_encode:'query'(Version, [<<"USE ">>, Keyspace],
+                                [{consistency, any}]),
     ok = send_request(Use, 0, State),
     case wait_for_response(State) of
         {ok, Keyspace} ->
@@ -526,8 +531,8 @@ prepare_queries([{Name, Query} | Rest],
     Prepare = erlcql_encode:prepare(Version, Query),
     ok = send_request(Prepare, 0, State),
     case wait_for_response(State) of
-        {ok, QueryId, {ReqSpecs, _}} ->
-            {_, Types} = lists:unzip(ReqSpecs),
+        {ok, {QueryId, RequestMetadata, _}} ->
+            Types = proplists:get_value(types, RequestMetadata),
             true = ets:insert(PreparedETS, {Name, Query, QueryId, Types}),
             prepare_queries(Rest, State);
         {error, _Reason} = Error ->
@@ -566,8 +571,9 @@ wait_for_body(<<_:32, Length:32>> = Header,
 
 -spec decode_response(binary(), state()) ->
           ready() | authenticate() | response() | {error, term()}.
-decode_response(Binary, #state{flags = {Compression, _}}) ->
-    case erlcql_decode:decode(Binary, Compression) of
+decode_response(Binary, #state{version = Version,
+                               flags = {Compression, _}}) ->
+    case erlcql_decode:decode(Version, Binary, Compression) of
         {ok, 0, Response, <<>>} ->
             Response;
         {error, _} = Error ->
@@ -681,11 +687,22 @@ get_env_opt(Opt, Opts) ->
             get_env(Opt)
     end.
 
+get_internal_opt(Opt, Opts) ->
+    {Opt, Value} = lists:keyfind(Opt, 1, Opts),
+    Value.
+
 -spec get_opt(term(), proplist()) -> Value :: term().
 get_opt(Opt, Opts) ->
     get_opt(Opt, Opts, undefined).
 
--spec get_opt(term(), proplist(), term()) -> Value :: term().
+-spec get_opt(term(), proplist(), term() | function()) -> Value :: term().
+get_opt(Opt, Opts, Default) when is_function(Default) ->
+    case lists:keyfind(Opt, 1, Opts) of
+        {Opt, Value} ->
+            Value;
+        false ->
+            Default()
+    end;
 get_opt(Opt, Opts, Default) ->
     case lists:keyfind(Opt, 1, Opts) of
         {Opt, Value} ->
