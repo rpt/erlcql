@@ -50,25 +50,52 @@ new_parser() ->
 parse(Data, #parser{buffer = Buffer} = Parser, Compression) ->
     NewBuffer = <<Buffer/binary, Data/binary>>,
     NewParser = Parser#parser{buffer = NewBuffer},
-    run_parser(NewParser, [], Compression).
+    parse_loop(NewParser, Compression, []).
 
 %%-----------------------------------------------------------------------------
 %% Parser functions
 %%-----------------------------------------------------------------------------
 
--spec run_parser(parser(), [{integer(), response()}], compression()) ->
+-spec parse_loop(parser(), compression(), [{integer(), response()}]) ->
           {ok, Responses :: [{Stream :: integer(),
                               Response :: response()}],
            NewParser :: parser()} |
           {error, Reason :: term()}.
-run_parser(#parser{buffer = Buffer} = Parser, Responses, Compression) ->
+parse_loop(Parser, Compression, Responses) ->
+    case run_parser(Parser, Compression) of
+        {ok, Response, NewParser} ->
+            parse_loop(NewParser, Compression, [Response | Responses]);
+        {error, binary_too_small, NewParser} ->
+            {ok, lists:reverse(Responses), NewParser};
+        {error, Other} ->
+            {error, Other}
+    end.
+
+run_parser(#parser{buffer = Buffer} = Parser, Compression) ->
+    Size = byte_size(Buffer),
+    case Size < 8 of
+        true -> {error, binary_too_small, Parser};
+        false ->
+            #parser{length = Length} = NewParser = get_length(Parser),
+            case Size < Length of
+                true ->
+                    {error, binary_too_small, NewParser};
+                false ->
+                    run_decode(NewParser, Compression)
+            end
+    end.
+
+get_length(#parser{length = undefined, buffer = Buffer} = Parser) ->
+    <<_:32, Length:32, _/binary>> = Buffer,
+    Parser#parser{length = Length + 8};
+get_length(Parser) -> Parser.
+
+run_decode(#parser{buffer = Buffer} = Parser, Compression) ->
     case decode(Buffer, Compression) of
         {ok, Stream, Response, Leftovers} ->
-            NewParser = Parser#parser{buffer = Leftovers},
-            run_parser(NewParser,
-                       [{Stream, Response} | Responses], Compression);
-        {error, binary_too_small} ->
-            {ok, lists:reverse(Responses), Parser};
+            NewParser = Parser#parser{length = undefined,
+                                      buffer = Leftovers},
+            {ok, {Stream, Response}, NewParser};
         {error, Other} ->
             {error, Other}
     end.
@@ -99,11 +126,8 @@ decode(<<?RESPONSE:1, ?VERSION:7, _Flags:7, Decompress:1,
                        event(Data2)
                end,
     {ok, Stream, Response, Rest};
-decode(<<_Other:32, Length:32, _Data:Length/binary,
-         _Rest/binary>>, _Compression) ->
-    {error, bad_header};
 decode(_Other, _Compression) ->
-    {error, binary_too_small}.
+    {error, bad_header}.
 
 -spec maybe_decompress(0 | 1, compression(), binary()) -> binary().
 maybe_decompress(0, _Compression, Data) ->
