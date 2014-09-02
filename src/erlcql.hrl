@@ -18,24 +18,19 @@
 %% FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 %% IN THE SOFTWARE.
 
-%% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
-
 -define(APP, erlcql).
 
 -type version() :: 1 | 2.
 
-%% Directions
 -define(REQUEST, 0).
 -define(RESPONSE, 1).
 
-%% Encode/decode types
 -define(INT, 4/big-signed-integer-unit:8).
 -define(SHORT, 2/big-unsigned-integer-unit:8).
 
 -define(int(X), <<X:?INT>>).
 -define(short(X), <<X:?SHORT>>).
 
-%% Parser
 -record(parser, {
           buffer = <<>> :: binary(),
           length :: pos_integer(),
@@ -44,10 +39,6 @@
 -type parser() :: #parser{}.
 
 -type event_fun() :: fun((event()) -> any()).
-
-%%-----------------------------------------------------------------------------
-%% Types
-%%-----------------------------------------------------------------------------
 
 -type proplist() :: proplists:proplist().
 -type socket() :: inet:socket().
@@ -170,8 +161,6 @@
 
 -type inet() :: {inet:ip_address(), inet:port_number()}.
 
-%% Types ----------------------------------------------------------------------
-
 -type uuid() :: bitstring().
 
 -type native_type() :: binary()
@@ -194,10 +183,6 @@
               | collection_type().
 
 -type values() :: [type() | {option(), type()}].
-
-%%-----------------------------------------------------------------------------
-%% Logging macros
-%%-----------------------------------------------------------------------------
 
 -ifdef(ERLCQL_NO_LOGS).
 -define(ERROR(Format, Data), begin Format, Data, ok end).

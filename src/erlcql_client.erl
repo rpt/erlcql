@@ -18,40 +18,33 @@
 %% FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 %% IN THE SOFTWARE.
 
-%% @doc Native protocol CQL client module.
-%% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
 -module(erlcql_client).
 -behaviour(gen_fsm).
 
 -export([start_link/1]).
-
 -export(['query'/3]).
 -export([execute/4]).
 -export([batch/3]).
-
 -export([prepare/2]).
 -export([prepare/3]).
 -export([options/1]).
 -export([register/2]).
-
 -export([async_query/3]).
 -export([async_execute/4]).
 -export([await/1]).
 -export([await/2]).
-
 -export([get_env_opt/2]).
 
-%% gen_fsm callbacks
--export([init/1,
-         handle_event/3,
-         handle_sync_event/4,
-         handle_info/3,
-         code_change/4,
-         terminate/3]).
--export([startup/2,
-         startup/3,
-         ready/2,
-         ready/3]).
+-export([init/1]).
+-export([handle_event/3]).
+-export([handle_sync_event/4]).
+-export([handle_info/3]).
+-export([code_change/4]).
+-export([terminate/3]).
+-export([startup/2]).
+-export([startup/3]).
+-export([ready/2]).
+-export([ready/3]).
 
 -include("erlcql.hrl").
 
@@ -94,15 +87,11 @@
          }).
 -type backoff() :: #backoff{}.
 
-%% Start API ------------------------------------------------------------------
-
 start_link(Opts) ->
     Opts2 = [{parent, self()} | Opts],
     EventFun = event_fun(get_env_opt(event_handler, Opts)),
     Opts3 = [{event_fun, EventFun} | Opts2],
     gen_fsm:start_link(?MODULE, proplists:unfold(Opts3), []).
-
-%% Request API ----------------------------------------------------------------
 
 -spec 'query'(pid(), iodata(), consistency()) ->
           result() | {error, Reason :: term()}.
@@ -133,8 +122,6 @@ options(Pid) ->
 register(Pid, Events) ->
     async_call(Pid, {register, Events}).
 
-%% Async request API ----------------------------------------------------------
-
 -spec async_query(pid(), iodata(), consistency()) ->
           {ok, QueryRef :: erlcql:query_ref()} | {error, Reason :: term()}.
 async_query(Pid, QueryString, Params) ->
@@ -161,8 +148,6 @@ await({error, _Reason} = Error, _Timeout) ->
     Error;
 await(QueryRef, Timeout) ->
     do_await(QueryRef, Timeout).
-
-%% FSM: init ------------------------------------------------------------------
 
 init(Opts) ->
     State = init_state(Opts),
@@ -238,8 +223,6 @@ init_state(Opts) ->
            prepared_ets = PreparedETS,
            version = Version}.
 
-%% State: startup -------------------------------------------------------------
-
 startup(reconnect, #state{backoff = Backoff,
                           database = {Host, Port},
                           keepalive = Keepalive} = State) ->
@@ -292,8 +275,6 @@ not_ready(Request, State) ->
 not_ready(Request, Info, State) ->
     ?DEBUG("Connection not ready for '~s': ~p", [Request, Info]),
     {reply, {error, not_ready}, startup, State}.
-
-%% State: ready ---------------------------------------------------------------
 
 ready(Event, State) ->
     ?ERROR("Bad event (ready): ~p", [Event]),
@@ -361,8 +342,6 @@ ready(Event, _From, State) ->
     ?ERROR("Bad event (ready/sync): ~p", [Event]),
     {stop, {bad_event, Event}, State}.
 
-%% FSM: event handling --------------------------------------------------------
-
 handle_event({timeout, Stream}, StateName,
              #state{async_ets = AsyncETS,
                     streams = Streams} = State) ->
@@ -405,10 +384,6 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 
 terminate(_Reason, _StateName, #state{socket = Socket}) ->
     close_socket(Socket).
-
-%%-----------------------------------------------------------------------------
-%% Internal functions
-%%-----------------------------------------------------------------------------
 
 -spec maybe_create_prepared_ets(proplist()) -> ets().
 maybe_create_prepared_ets(Opts) ->
@@ -686,8 +661,6 @@ send_response(Stream, Response, Pid, #state{async_ets = AsyncETS,
     true = ets:delete(AsyncETS, Stream),
     Pid ! Response,
     State#state{streams = [Stream | Streams]}.
-
-%% Helper functions -----------------------------------------------------------
 
 -spec get_env_opt(term(), proplist()) -> Value :: term().
 get_env_opt(Opt, Opts) ->

@@ -18,8 +18,6 @@
 %% FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 %% IN THE SOFTWARE.
 
-%% @doc Native protocol decoder/parser.
-%% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
 -module(erlcql_decode).
 
 -export([new_parser/1]).
@@ -31,14 +29,10 @@
 -define(STRING(Length), Length/bytes).
 -define(BYTES(Length), Length/bytes).
 
-%% API functions --------------------------------------------------------------
-
-%% @doc Returns a new parser.
 -spec new_parser(version()) -> parser().
 new_parser(Version) ->
     #parser{version = Version}.
 
-%% @doc Parses given data using a parser.
 -spec parse(binary(), parser(), compression()) ->
           {ok, Responses :: [{Stream :: integer(),
                               Response :: response()}],
@@ -48,8 +42,6 @@ parse(Data, #parser{buffer = Buffer} = Parser, Compression) ->
     NewBuffer = <<Buffer/binary, Data/binary>>,
     NewParser = Parser#parser{buffer = NewBuffer},
     parse_loop(NewParser, Compression, []).
-
-%% Parser functions -----------------------------------------------------------
 
 -spec parse_loop(parser(), compression(), [{integer(), response()}]) ->
           {ok, Responses :: [{Stream :: integer(),
@@ -95,8 +87,6 @@ run_decode(#parser{version = Version,
         {error, Other} ->
             {error, Other}
     end.
-
-%% Decode functions -----------------------------------------------------------
 
 -spec decode(version(), binary(), compression()) ->
           {ok, Stream :: integer(), Response :: response(), Rest :: binary()} |

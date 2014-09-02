@@ -18,16 +18,14 @@
 %% FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 %% IN THE SOFTWARE.
 
-%% @doc Value encoding/decoding module.
-%% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
 -module(erlcql_convert).
 
--export([from_binary/2, from_null/1,
-         to_binary/1, to_binary/2]).
+-export([from_binary/2]).
+-export([from_null/1]).
+-export([to_binary/1]).
+-export([to_binary/2]).
 
 -include("erlcql.hrl").
-
-%% From binary ----------------------------------------------------------------
 
 -spec from_binary(option(), binary()) -> type().
 from_binary(ascii, Binary) ->
@@ -115,8 +113,6 @@ decode_signed(Binary) ->
     Size = byte_size(Binary) * 8,
     <<Int:Size/signed>> = Binary,
     Int.
-
-%% To binary ------------------------------------------------------------------
 
 -spec to_binary(Values) -> Binaries when
       Values :: [Value | TypedValue],

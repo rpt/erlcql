@@ -18,8 +18,6 @@
 %% FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 %% IN THE SOFTWARE.
 
-%% @doc Native protocol request encoding.
-%% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
 -module(erlcql_encode).
 
 -export([frame/4]).
@@ -37,9 +35,6 @@
 
 -type query_parameters() :: [{atom(), term()}].
 
-%% API function ---------------------------------------------------------------
-
-%% @doc Encodes the entire request frame.
 -spec frame(version(), request(), tuple(), integer()) -> Frame :: iolist().
 frame(V, {Opcode, Payload}, {Compression, _}, Stream) ->
     OpcodeByte = opcode(Opcode),
@@ -48,7 +43,6 @@ frame(V, {Opcode, Payload}, {Compression, _}, Stream) ->
     [<<?REQUEST:1, V:7, 0:7, CompressionBit:1>>,
      Stream, OpcodeByte, Length, Payload2].
 
-%% @doc Encodes the startup request message body.
 -spec startup(version(), compression(), bitstring()) -> {startup, iolist()}.
 startup(_V, false, CQLVersion) ->
     {startup, string_map([{<<"CQL_VERSION">>, CQLVersion}])};
@@ -56,18 +50,15 @@ startup(_V, Compression, CQLVersion) ->
     {startup, string_map([{<<"CQL_VERSION">>, CQLVersion},
                           {<<"COMPRESSION">>, compression(Compression)}])}.
 
-%% @doc Encodes the credentials request message body.
 -spec credentials(version(), [{K :: bitstring(), V :: bitstring()}]) ->
           {credentials, iolist()}.
 credentials(1, Informations) ->
     {credentials, string_map(Informations)}.
 
-%% @doc Encodes the options request message body.
 -spec options(version()) -> {options, iolist()}.
 options(_V) ->
     {options, []}.
 
-%% @doc Encodes the query request message body.
 -spec 'query'(version(), iodata(), query_parameters()) ->
           {'query', iolist()}.
 'query'(1, QueryString, Params) ->
@@ -153,8 +144,6 @@ register(_V, Events) ->
 -spec auth_response(version(), binary()) -> {auth_response, iolist()}.
 auth_response(2, Token) ->
     {auth_response, [bytes(Token)]}.
-
-%% Encode functions -----------------------------------------------------------
 
 -spec int(integer()) -> binary().
 int(X) ->
