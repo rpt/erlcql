@@ -29,6 +29,7 @@
 -export(['query'/3]).
 -export([prepare/2]).
 -export([execute/4]).
+-export([batch/3]).
 -export([register/2]).
 -export([auth_response/2]).
 
@@ -116,12 +117,10 @@ query_flag(page_size)          -> 16#04;
 query_flag(paging_state)       -> 16#08;
 query_flag(serial_consistency) -> 16#10.
 
-%% @doc Encodes the prepare request message body.
 -spec prepare(version(), iodata()) -> {prepare, iolist()}.
 prepare(_V, QueryString) ->
     {prepare, [long_string(QueryString)]}.
 
-%% @doc Encodes the execute request message body.
 -spec execute(version(), binary(), values(), consistency()) ->
           {execute, iolist()}.
 execute(1, QueryId, Values, Consistency) ->
@@ -135,7 +134,18 @@ execute(2, QueryId, Values, Params) ->
     {execute, [short_bytes(QueryId), short(consistency(Consistency)),
                query_parameters(Params2)]}.
 
-%% @doc Encodes the register request message body.
+batch(2, Queries, Params) when is_list(Queries) ->
+    BatchType = erlcql_client:get_env_opt(batch_type, Params),
+    Consistency = erlcql_client:get_env_opt(consistency, Params),
+    Queries2 = [batch_query(Q) || Q <- Queries],
+    {batch, [batch_type(BatchType), short(length(Queries)), Queries2,
+             short(consistency(Consistency))]}.
+
+batch_query({Query, Values}) when is_atom(Query) ->
+    [1, short_bytes(Query), erlcql_convert:to_binary(Values)];
+batch_query({Query, Values}) ->
+    [1, long_string(Query), erlcql_convert:to_binary(Values)].
+
 -spec register(version(), [event_type()]) -> {register, iolist()}.
 register(_V, Events) ->
     {register, event_list(Events)}.
@@ -188,6 +198,7 @@ opcode('query')       -> 16#07;
 opcode(prepare)       -> 16#09;
 opcode(execute)       -> 16#0a;
 opcode(register)      -> 16#0b;
+opcode(batch)         -> 16#0d;
 opcode(auth_response) -> 16#0f.
 
 -spec consistency(consistency()) -> integer().
@@ -202,6 +213,10 @@ consistency(each_quorum)  -> 16#07;
 consistency(serial)       -> 16#08;
 consistency(local_serial) -> 16#09;
 consistency(local_one)    -> 16#0a.
+
+batch_type(logged)   -> 0;
+batch_type(unlogged) -> 1;
+batch_type(counter)  -> 2.
 
 -spec event(event_type()) -> bitstring().
 event(topology_change) -> <<"TOPOLOGY_CHANGE">>;

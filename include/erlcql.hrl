@@ -104,7 +104,11 @@
                      | quorum
                      | all
                      | local_quorum
-                     | each_quorum.
+                     | each_quorum
+                     | local_one.
+
+-type serial_consistency() :: serial
+                            | local_serial.
 
 -type event_type() :: topology_change
                     | status_change

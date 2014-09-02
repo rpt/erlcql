@@ -27,6 +27,7 @@
 
 -export(['query'/3]).
 -export([execute/4]).
+-export([batch/3]).
 
 -export([prepare/2]).
 -export([prepare/3]).
@@ -120,6 +121,9 @@ prepare(Pid, QueryString, Name) ->
           result() | {error, Reason :: term()}.
 execute(Pid, QueryId, Values, Consistency) ->
     async_call(Pid, {execute, QueryId, Values, Consistency}).
+
+batch(Pid, Queries, Params) ->
+    async_call(Pid, {batch, Queries, Params}).
 
 -spec options(pid()) -> supported() | {error, Reason :: term()}.
 options(Pid) ->
@@ -271,6 +275,8 @@ startup({_Ref, {prepare, Query, _}}, _From, State) ->
     not_ready(prepare, Query, State);
 startup({_Ref, {execute, Query, _, _}}, _From, State) ->
     not_ready(execute, Query, State);
+startup({_Ref, {batch, _, _, _}}, _From, State) ->
+    not_ready(batch, State);
 startup({_Ref, options}, _From, State) ->
     not_ready(options, State);
 startup({_Ref, {register, _}}, _From, State) ->
@@ -340,6 +346,10 @@ ready({Ref, {execute, Name, Values, Consistency}}, {From, _},
             ?DEBUG("Execute failed, invalid query name: ~s", [Name]),
             {reply, {error, invalid_query_name}, ready, State}
     end;
+ready({Ref, {batch, Queries, Params}}, {From, _},
+       #state{version = Version} = State) ->
+    Batch = erlcql_encode:batch(Version, Queries, Params),
+    send(Batch, {Ref, From}, State);
 ready({Ref, options}, {From, _}, #state{version = Version} = State) ->
     Options = erlcql_encode:options(Version),
     send(Options, {Ref, From}, State);
@@ -648,6 +658,7 @@ parse_response(Data, #state{parser = Parser,
             {stop, Reason, State}
     end.
 
+handle_responses([], State) -> State;
 handle_responses(Responses, State) ->
     lists:foldl(fun handle_response/2, State, Responses).
 
