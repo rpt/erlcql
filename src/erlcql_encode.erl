@@ -132,10 +132,8 @@ batch(2, Queries, Params) when is_list(Queries) ->
     {batch, [batch_type(BatchType), short(length(Queries)), Queries2,
              short(consistency(Consistency))]}.
 
-batch_query({Query, Values}) when is_atom(Query) ->
-    [1, short_bytes(Query), erlcql_convert:to_binary(Values)];
-batch_query({Query, Values}) ->
-    [1, long_string(Query), erlcql_convert:to_binary(Values)].
+batch_query({QueryId, Values}) ->
+    [1, short_bytes(QueryId), erlcql_convert:to_binary(Values)].
 
 -spec register(version(), [event_type()]) -> {register, iolist()}.
 register(_V, Events) ->

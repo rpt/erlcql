@@ -5,6 +5,7 @@
                       single_query/1,
                       'query'/2,
                       execute/3,
+                      batch/2,
                       start_client/1,
                       stop_client/1]).
 

@@ -111,6 +111,8 @@ prepare(Pid, QueryString, Name) ->
 execute(Pid, QueryId, Values, Consistency) ->
     async_call(Pid, {execute, QueryId, Values, Consistency}).
 
+-spec batch(pid(), [{atom(), values()}], proplist()) ->
+          result() | {error, Reason :: term()}.
 batch(Pid, Queries, Params) ->
     async_call(Pid, {batch, Queries, Params}).
 
@@ -258,7 +260,7 @@ startup({_Ref, {prepare, Query, _}}, _From, State) ->
     not_ready(prepare, Query, State);
 startup({_Ref, {execute, Query, _, _}}, _From, State) ->
     not_ready(execute, Query, State);
-startup({_Ref, {batch, _, _, _}}, _From, State) ->
+startup({_Ref, {batch, _, _}}, _From, State) ->
     not_ready(batch, State);
 startup({_Ref, options}, _From, State) ->
     not_ready(options, State);
@@ -328,9 +330,15 @@ ready({Ref, {execute, Name, Values, Consistency}}, {From, _},
             {reply, {error, invalid_query_name}, ready, State}
     end;
 ready({Ref, {batch, Queries, Params}}, {From, _},
-       #state{version = Version} = State) ->
-    Batch = erlcql_encode:batch(Version, Queries, Params),
-    send(Batch, {Ref, From}, State);
+       #state{prepared_ets = PreparedETS,
+              version = Version} = State) ->
+    case expand_prepared(PreparedETS, Queries, []) of
+        {error, Error} ->
+            {reply, {error, Error}, ready, State};
+        Queries2 ->
+            Batch = erlcql_encode:batch(Version, Queries2, Params),
+            send(Batch, {Ref, From}, State)
+    end;
 ready({Ref, options}, {From, _}, #state{version = Version} = State) ->
     Options = erlcql_encode:options(Version),
     send(Options, {Ref, From}, State);
@@ -384,6 +392,21 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 
 terminate(_Reason, _StateName, #state{socket = Socket}) ->
     close_socket(Socket).
+
+-spec expand_prepared(ets(), [{atom(), values()}], [{binary(), values()}]) ->
+          [{binary(), values()}] | {error, invalid_query_name}.
+expand_prepared(_, [], Acc) ->
+    lists:reverse(Acc);
+expand_prepared(ETS, [{Name, Values} | Qs], Acc) when is_atom(Name) ->
+    case ets:lookup(ETS, Name) of
+        [{Name, _Query, QueryId, undefined}] ->
+            expand_prepared(ETS, Qs, [{QueryId, Values} | Acc]);
+        [{Name, _Query, QueryId, Types}] ->
+            TypedValues = lists:zip(Types, Values),
+            expand_prepared(ETS, Qs, [{QueryId, TypedValues} | Acc]);
+        [] ->
+            {error, invalid_query_name}
+    end.
 
 -spec maybe_create_prepared_ets(proplist()) -> ets().
 maybe_create_prepared_ets(Opts) ->

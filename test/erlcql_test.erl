@@ -62,6 +62,11 @@ execute(Pid, Name, Values) ->
     {ok, Response} = erlcql_client:execute(Pid, Name, Values, ?CONSISTENCY),
     Response.
 
+batch(Pid, Queries) ->
+    Opts = [{batch_type, logged} | ?CONSISTENCY],
+    {ok, Response} = erlcql_client:batch(Pid, Queries, Opts),
+    Response.
+
 -spec stop_client(pid()) -> ok.
 stop_client(Pid) ->
     true = unlink(Pid),

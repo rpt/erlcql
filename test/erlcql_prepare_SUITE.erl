@@ -8,7 +8,8 @@
 %% Suite ----------------------------------------------------------------------
 
 all() ->
-    [prepare_execute].
+    [prepare_execute,
+     prepare_batch].
 
 %% Fixtures -------------------------------------------------------------------
 
@@ -68,3 +69,26 @@ prepare_execute(Config) ->
 
     {[Row], _} = execute(Client, select, [hd(Values)]),
     Row = Values.
+
+prepare_batch(Config) ->
+    Keyspace = ?c(keyspace, Config),
+    Table = gen_table_name(),
+    Create = [<<"CREATE TABLE ">>, Keyspace, <<".">>, Table,
+              <<" (x int PRIMARY KEY, y int)">>],
+    single_query(Create),
+
+    Insert = [<<"INSERT INTO ">>, Table,
+              <<" (x, y) VALUES (?, ?)">>],
+    Select = [<<"SELECT * FROM ">>, Table],
+    Prepare = [{insert, Insert},
+               {select, Select}],
+    Opts = [{use, Keyspace},
+            {prepare, Prepare}],
+    Client = start_client(Opts),
+
+    Points = [[1, 1], [2, 3], [3, 5]],
+    Queries = [{insert, V} || V <- Points],
+    batch(Client, Queries),
+
+    {Rows, _} = execute(Client, select, []),
+    Points = lists:sort(Rows).
