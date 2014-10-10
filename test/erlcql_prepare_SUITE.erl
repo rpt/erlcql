@@ -8,7 +8,8 @@
 %% Suite ----------------------------------------------------------------------
 
 all() ->
-    [prepare_execute].
+    [prepare_execute,
+     prepare_error].
 
 %% Fixtures -------------------------------------------------------------------
 
@@ -68,3 +69,35 @@ prepare_execute(Config) ->
 
     {[Row], _} = execute(Client, select, [hd(Values)]),
     Row = Values.
+
+prepare_error(Config) ->
+    Keyspace = ?c(keyspace, Config),
+    Table = gen_table_name(),
+    Create = [<<"CREATE TABLE ">>, Keyspace, <<".">>, Table,
+              <<" (id int PRIMARY KEY,"
+                " ascii ascii,"
+                " bigint bigint,"
+                " blob blob,"
+                " boolean boolean,"
+                " inet inet,"
+                " timestamp timestamp,"
+                " timeuuid timeuuid,"
+                " uuid uuid,"
+                " varchar varchar,"
+                " varint varint,"
+                " list list<varchar>,"
+                " set_ set<varint>,"
+                " map map<uuid, boolean>)">>],
+    single_query(Create),
+
+    Insert = [<<"INSERT INTO ">>, Table,
+              <<" (id, ascii, bigint, blob, boolean, inet, timestamp,"
+                " timeuuid, uuid, varchar, varint, list, set_, map) VALUES"
+                " (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)">>],
+
+    Opts = [{use, Keyspace}],
+    Client = start_client(Opts),
+
+    Reason = {invalid,<<"Unmatched column names/values">>, undefined},
+    {error, {broken_insert, Insert, Reason}} =
+        erlcql_client:prepare(Client, Insert, broken_insert).
