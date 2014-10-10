@@ -186,11 +186,7 @@ insert(Config) ->
 start_without_use(_Config) ->
     {ok, Pid} = erlcql:start_link("localhost", ?OPTS),
     unlink(Pid),
-    %% Msg = <<"no keyspace has been specified">>,
-    %% TODO: Different messages for v1 and v2
-    Msg = <<"No keyspace has been specified. "
-            "USE a keyspace, or explicity specify keyspace.tablename">>,
-    {error, {invalid, Msg, _}} = q(Pid, ?CREATE_TABLE),
+    {error, {invalid, _, _}} = q(Pid, ?CREATE_TABLE),
     exit(Pid, kill).
 
 start_with_use(_Config) ->

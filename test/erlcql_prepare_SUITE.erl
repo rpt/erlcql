@@ -9,7 +9,8 @@
 
 all() ->
     [prepare_execute,
-     prepare_batch].
+     prepare_batch,
+     prepare_error].
 
 %% Fixtures -------------------------------------------------------------------
 
@@ -92,3 +93,17 @@ prepare_batch(Config) ->
 
     {Rows, _} = execute(Client, select, []),
     Points = lists:sort(Rows).
+
+prepare_error(Config) ->
+    Keyspace = ?c(keyspace, Config),
+    Table = gen_table_name(),
+    Create = [<<"CREATE TABLE ">>, Keyspace, <<".">>, Table,
+              <<" (x int PRIMARY KEY, y int)">>],
+    single_query(Create),
+
+    Insert = [<<"INSERT INTO ">>, Table, <<" (x, y) VALUES (?)">>],
+    Opts = [{use, Keyspace}],
+    Client = start_client(Opts),
+
+    {error, {broken_insert, Insert, {invalid, _, undefined}}} =
+        erlcql_client:prepare(Client, Insert, broken_insert).
