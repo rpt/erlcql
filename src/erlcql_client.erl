@@ -298,8 +298,8 @@ ready({Ref, {prepare, Query, Name}}, {From, _},
     Fun = fun({ok, QueryId, Types}) ->
                   true = ets:insert(PreparedETS, {Name, Query, QueryId, Types}),
                   {ok, QueryId};
-             ({error, _} = Response) ->
-                  Response
+             ({error, Reason}) ->
+                  {error, {Name, QueryString, Reason}}
           end,
     send(Prepare, {Ref, From, Fun}, State);
 ready({Ref, {execute, QueryId, Values, Consistency}},
