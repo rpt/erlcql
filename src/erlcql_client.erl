@@ -78,7 +78,6 @@
 -define(PREPARED_ETS_NAME, erlcql_prepared).
 -define(PREPARED_ETS_OPTS, [set, private,
                             {read_concurrency, true}]).
--define(TIMEOUT, timer:seconds(5)).
 
 -record(backoff, {
           start :: pos_integer(),
@@ -136,11 +135,13 @@ async_execute(Pid, QueryId, Values, Consistency) ->
 
 -spec await(erlcql:query_ref()) -> response() | {error, Reason :: term()}.
 await({ok, QueryRef}) ->
-    do_await(QueryRef, ?TIMEOUT);
+    Timeout = get_env(default_timeout),
+    do_await(QueryRef, Timeout);
 await({error, _Reason} = Error) ->
     Error;
 await(QueryRef) ->
-    do_await(QueryRef, ?TIMEOUT).
+    Timeout = get_env(default_timeout),
+    do_await(QueryRef, Timeout).
 
 -spec await(erlcql:query_ref(), integer()) ->
           response() | {error, Reason :: term()}.

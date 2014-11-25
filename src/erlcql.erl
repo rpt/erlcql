@@ -102,4 +102,5 @@ default(auto_reconnect) -> false;
 default(reconnect_start) -> 1000;
 default(reconnect_max) -> 30000;
 default(keepalive) -> false;
-default(version) -> 2.
+default(version) -> 2;
+default(default_timeout) -> timer:seconds(5).
