@@ -351,7 +351,7 @@ ready(Event, _From, State) ->
     ?ERROR("Bad event (ready/sync): ~p", [Event]),
     {stop, {bad_event, Event}, State}.
 
-handle_event({timeout, Stream}, StateName,
+handle_event({return, Stream}, StateName,
              #state{async_ets = AsyncETS,
                     streams = Streams} = State) ->
     true = ets:delete(AsyncETS, Stream),
@@ -631,9 +631,10 @@ cast(Pid, Request) ->
 do_await({Ref, Pid, Stream}, Timeout) ->
     receive
         {Ref, Response} ->
+            gen_fsm:send_all_state_event(Pid, {return, Stream}),
             Response
     after Timeout ->
-            gen_fsm:send_all_state_event(Pid, {timeout, Stream}),
+            gen_fsm:send_all_state_event(Pid, {return, Stream}),
             {error, timeout}
     end.
 
@@ -680,11 +681,9 @@ handle_response({Stream, Response}, #state{async_ets = AsyncETS} = State) ->
 
 -spec send_response(integer(), {erlcql:query_ref(), erlcql:response()},
                     pid(), state()) -> state().
-send_response(Stream, Response, Pid, #state{async_ets = AsyncETS,
-                                            streams = Streams} = State) ->
-    true = ets:delete(AsyncETS, Stream),
+send_response(_Stream, Response, Pid, State) ->
     Pid ! Response,
-    State#state{streams = [Stream | Streams]}.
+    State.
 
 -spec get_env_opt(term(), proplist()) -> Value :: term().
 get_env_opt(Opt, Opts) ->
