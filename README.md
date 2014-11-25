@@ -29,6 +29,7 @@ erlcql:start_link(Options :: proplists:proplist()) ->
 | reconnect_start | pos_integer()                   | 1000              |
 | reconnect_max   | pos_integer()                   | 30000             |
 | keepalive       | boolean()                       | false             |
+| default_timeout | pos_integer()                   | 5000              |
 
 ### Query
 
