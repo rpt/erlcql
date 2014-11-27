@@ -184,17 +184,6 @@
 
 -type values() :: [type() | {option(), type()}].
 
--ifdef(ERLCQL_NO_LOGS).
--define(ERROR(Format, Data), begin Format, Data, ok end).
--define(EMERGENCY(Format, Data), begin Format, Data, ok end).
--define(ALERT(Format, Data), begin Format, Data, ok end).
--define(CRITICAL(Format, Data), begin Format, Data, ok end).
--define(WARNING(Format, Data), begin Format, Data, ok end).
--define(INFO(Format, Data), begin Format, Data, ok end).
--define(NOTICE(Format, Data), begin Format, Data, ok end).
--define(DEBUG(Format, Data), begin Format, Data, ok end).
--else.
--ifdef(ERLCQL_LAGER).
 -compile({parse_transform, lager_transform}).
 -define(EMERGENCY(Format, Data), lager:emergency(Format, Data)).
 -define(ALERT(Format, Data), lager:alert(Format, Data)).
@@ -204,17 +193,6 @@
 -define(NOTICE(Format, Data), lager:notice(Format, Data)).
 -define(INFO(Format, Data), lager:info(Format, Data)).
 -define(DEBUG(Format, Data), lager:debug(Format, Data)).
--else.
--define(ERROR(Format, Data), error_logger:error_msg(Format ++ "~n", Data)).
--define(EMERGENCY(Format, Data), ?ERROR(Format, Data)).
--define(ALERT(Format, Data), ?ERROR(Format, Data)).
--define(CRITICAL(Format, Data), ?ERROR(Format, Data)).
--define(WARNING(Format, Data), error_logger:warning_msg(Format ++ "~n", Data)).
--define(INFO(Format, Data), error_logger:info_msg(Format ++ "~n", Data)).
--define(NOTICE(Format, Data), ?INFO(Format, Data)).
--define(DEBUG(Format, Data), ?INFO(Format, Data)).
--endif.
--endif.
 
 -define(EMERGENCY(Format), ?EMERGENCY(Format, [])).
 -define(ALERT(Format), ?ALERT(Format, [])).
