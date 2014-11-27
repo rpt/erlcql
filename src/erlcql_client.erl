@@ -351,11 +351,6 @@ ready(Event, _From, State) ->
     ?ERROR("Bad event (ready/sync): ~p", [Event]),
     {stop, {bad_event, Event}, State}.
 
-handle_event({timeout, Stream}, StateName,
-             #state{async_ets = AsyncETS,
-                    streams = Streams} = State) ->
-    true = ets:delete(AsyncETS, Stream),
-    {next_state, StateName, State#state{streams = [Stream | Streams]}};
 handle_event(Event, StateName, State) ->
     ?ERROR("Bad event (~s/handle_event): ~p", [StateName, Event]),
     {stop, {bad_event, Event}, State}.
@@ -628,12 +623,11 @@ cast(Pid, Request) ->
 
 -spec do_await(erlcql:query_ref(), integer()) ->
           response() | {error, Reason :: term()}.
-do_await({Ref, Pid, Stream}, Timeout) ->
+do_await({Ref, _Pid, _Stream}, Timeout) ->
     receive
         {Ref, Response} ->
             Response
     after Timeout ->
-            gen_fsm:send_all_state_event(Pid, {timeout, Stream}),
             {error, timeout}
     end.
 
@@ -680,10 +674,9 @@ handle_response({Stream, Response}, #state{async_ets = AsyncETS} = State) ->
 
 -spec send_response(integer(), {erlcql:query_ref(), erlcql:response()},
                     pid(), state()) -> state().
-send_response(Stream, Response, Pid, #state{async_ets = AsyncETS,
-                                            streams = Streams} = State) ->
-    true = ets:delete(AsyncETS, Stream),
+send_response(Stream, Response, Pid, State=#state{async_ets = AsyncETS, streams = Streams}) ->
     Pid ! Response,
+    true = ets:delete(AsyncETS, Stream),
     State#state{streams = [Stream | Streams]}.
 
 -spec get_env_opt(term(), proplist()) -> Value :: term().
