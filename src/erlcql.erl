@@ -31,9 +31,7 @@
 
 -include("erlcql.hrl").
 
--opaque query_ref() :: {Ref :: reference(),
-                        Pid :: pid(),
-                        Stream :: integer()}.
+-opaque query_ref() :: reference().
 
 -export_type([response/0]).
 -export_type([consistency/0]).

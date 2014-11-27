@@ -351,11 +351,6 @@ ready(Event, _From, State) ->
     ?ERROR("Bad event (ready/sync): ~p", [Event]),
     {stop, {bad_event, Event}, State}.
 
-handle_event({timeout, Stream}, StateName,
-             #state{async_ets = AsyncETS,
-                    streams = Streams} = State) ->
-    true = ets:delete(AsyncETS, Stream),
-    {next_state, StateName, State#state{streams = [Stream | Streams]}};
 handle_event(Event, StateName, State) ->
     ?ERROR("Bad event (~s/handle_event): ~p", [StateName, Event]),
     {stop, {bad_event, Event}, State}.
@@ -618,22 +613,21 @@ async_call(Pid, Request) ->
 -spec cast(pid(), tuple() | atom()) ->
           {ok, QueryRef :: erlcql:query_ref()} | {error, Reason :: term()}.
 cast(Pid, Request) ->
-    Ref = make_ref(),
-    case gen_fsm:sync_send_event(Pid, {Ref, Request}) of
-        {ok, Stream} ->
-            {ok, {Ref, Pid, Stream}};
+    QueryRef = make_ref(),
+    case gen_fsm:sync_send_event(Pid, {QueryRef, Request}) of
+        ok ->
+            {ok, QueryRef};
         {error, _Reason} = Error ->
             Error
     end.
 
 -spec do_await(erlcql:query_ref(), integer()) ->
           response() | {error, Reason :: term()}.
-do_await({Ref, Pid, Stream}, Timeout) ->
+do_await(QueryRef, Timeout) ->
     receive
-        {Ref, Response} ->
+        {QueryRef, Response} ->
             Response
     after Timeout ->
-            gen_fsm:send_all_state_event(Pid, {timeout, Stream}),
             {error, timeout}
     end.
 
@@ -644,7 +638,7 @@ send(Body, Info, #state{streams = [Stream | Streams],
                         async_ets = AsyncETS} = State) ->
     ok = send_request(Body, Stream, State),
     true = ets:insert(AsyncETS, {Stream, Info}),
-    {reply, {ok, Stream}, ready, State#state{streams = Streams}}.
+    {reply, ok, ready, State#state{streams = Streams}}.
 
 parse_response(Data, #state{parser = Parser,
                             flags = {Compression, _}} = State) ->
