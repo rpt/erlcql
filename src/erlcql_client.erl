@@ -47,6 +47,8 @@
 -export([ready/3]).
 
 -include("erlcql.hrl").
+-include("erlcql_metrics.hrl").
+
 
 -record(state, {
           async_ets :: ets(),
@@ -176,6 +178,7 @@ try_connect(#state{database = {Host, Port},
                     {ok, ready, State3};
                 {error, Reason} = Error ->
                     ?ERROR("Connection init failed: ~s", [Reason]),
+                    ok = quintana:notify_histogram(?CONNECTION_FAILURE_METRIC, 1),
                     {stop, Error}
             end;
         {error, Reason} = Error ->
@@ -251,6 +254,7 @@ startup(reconnect, #state{backoff = Backoff,
     end;
 startup(Event, State) ->
     ?ERROR("Bad event (startup): ~p", [Event]),
+    ok = quintana:notify_histogram(?CONNECTION_STARTUP_FAIL_METRIC, 1),
     {stop, {bad_event, Event}, State}.
 
 startup({_Ref, {'query', Query, _}}, _From, State) ->
@@ -285,6 +289,7 @@ ready(Event, State) ->
 
 ready({_Ref, _}, _From, #state{streams = []} = State) ->
     ?CRITICAL("Too many requests!"),
+    ok = quintana:notify_histogram(?CONNECTION_STREAMS_EXHAUSTED_METRIC, 1),
     {reply, {error, too_many_requests}, ready, State};
 ready({Ref, {'query', QueryString, Params}}, {From, _},
       #state{version = Version} = State) ->
@@ -366,18 +371,22 @@ handle_info({tcp, Socket, Data}, ready, #state{socket = Socket} = State) ->
 handle_info({tcp_closed, Socket}, _StateName,
             #state{socket = Socket, auto_reconnect = false} = State) ->
     ?ERROR("TCP socket ~p closed", [Socket]),
+    ok = quintana:notify_histogram(?CONNECTION_SOCKET_CLOSED, 1),
     {stop, tcp_closed, State};
 handle_info({tcp_closed, Socket}, _StateName,
             #state{socket = Socket, auto_reconnect = true} = State) ->
     ?WARNING("TCP socket ~p closed", [Socket]),
+    ok = quintana:notify_histogram(?CONNECTION_SOCKET_CLOSED, 1),
     try_again(State);
 handle_info({tcp_error, Socket, Reason}, _StateName,
             #state{socket = Socket, auto_reconnect = false} = State) ->
     ?ERROR("TCP socket ~p error: ~p", [Socket, Reason]),
+    ok = quintana:notify_histogram(?CONNECTION_SOCKET_ERROR, 1),
     {stop, {tcp_error, Reason}, State};
 handle_info({tcp_error, Socket, Reason}, _StateName,
             #state{socket = Socket, auto_reconnect = true} = State) ->
     ?WARNING("TCP socket ~p error: ~p", [Socket, Reason]),
+    ok = quintana:notify_histogram(?CONNECTION_SOCKET_ERROR, 1),
     try_again(State);
 handle_info(Info, StateName, State) ->
     ?ERROR("Bad info (~s/handle_info): ~p", [StateName, Info]),
@@ -628,6 +637,7 @@ do_await({Ref, _Pid, _Stream}, Timeout) ->
         {Ref, Response} ->
             Response
     after Timeout ->
+            ok = erclql_folsom:notify_histogram(?CONNECTION_QUERY_TIMEOUT, 1),
             {error, timeout}
     end.
 
@@ -648,6 +658,7 @@ parse_response(Data, #state{parser = Parser,
             {next_state, ready, State2#state{parser = Parser2}};
         {error, Reason} ->
             ?ERROR("Parsing response failed: ~p", [Reason]),
+            ok = quintana:notify_histogram(?CONNECTION_PARSE_ERROR, 1),
             {stop, Reason, State}
     end.
 
@@ -669,6 +680,7 @@ handle_response({Stream, Response}, #state{async_ets = AsyncETS} = State) ->
             send_response(Stream, {Ref, Response2}, Pid, State);
         [] ->
             ?WARNING("Unexpected response (~p): ~p", [Stream, Response]),
+            ok = quintana:notify_histogram(?CONNECTION_UNEXPECTED_RESPONSE, 1),
             State
     end.
 

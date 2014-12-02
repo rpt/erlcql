@@ -1,0 +1,8 @@
+-define(CONNECTION_FAILURE_METRIC, <<"erlcql.connection.failure">>).
+-define(CONNECTION_STARTUP_FAIL_METRIC, <<"erlcql.connection.startup_fail">>).
+-define(CONNECTION_STREAMS_EXHAUSTED_METRIC, <<"erlcql.connection.streams_exhausted">>).
+-define(CONNECTION_SOCKET_CLOSED, <<"erlcql.connection.socket_closed">>).
+-define(CONNECTION_SOCKET_ERROR, <<"erlcql.connection.socket_error">>).
+-define(CONNECTION_PARSE_ERROR, <<"erlcql.connection.parse_error">>).
+-define(CONNECTION_UNEXPECTED_RESPONSE, <<"erlcql.connection.unexpected_response">>).
+-define(CONNECTION_QUERY_TIMEOUT, <<"erlcql.connection.query_timeout">>).
