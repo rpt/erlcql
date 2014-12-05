@@ -655,7 +655,7 @@ parse_response(Data, #state{parser = Parser,
     case erlcql_decode:parse(Data, Parser, Compression) of
         {ok, Responses, Parser2} ->
             State2 = handle_responses(Responses, State),
-            {next_state, ready, State2#state{parser = Parser2}};
+            {next_state, ready, State2#state{parser = Parser2}, hibernate};
         {error, Reason} ->
             ?ERROR("Parsing response failed: ~p", [Reason]),
             ok = quintana:notify_histogram(?CONNECTION_PARSE_ERROR, 1),
