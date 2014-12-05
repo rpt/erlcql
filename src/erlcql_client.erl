@@ -637,7 +637,7 @@ do_await({Ref, _Pid, _Stream}, Timeout) ->
         {Ref, Response} ->
             Response
     after Timeout ->
-            ok = erclql_folsom:notify_histogram(?CONNECTION_QUERY_TIMEOUT, 1),
+            ok = quintana:notify_histogram(?CONNECTION_QUERY_TIMEOUT, 1),
             {error, timeout}
     end.
 
