@@ -18,34 +18,27 @@
 %% FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 %% IN THE SOFTWARE.
 
-%% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
-
 -define(APP, erlcql).
--define(VERSION, 1).
 
-%% Directions
+-type version() :: 1 | 2.
+
 -define(REQUEST, 0).
 -define(RESPONSE, 1).
 
-%% Encode/decode types
 -define(INT, 4/big-signed-integer-unit:8).
 -define(SHORT, 2/big-unsigned-integer-unit:8).
 
 -define(int(X), <<X:?INT>>).
 -define(short(X), <<X:?SHORT>>).
 
-%% Parser
 -record(parser, {
           buffer = <<>> :: binary(),
-          length :: pos_integer()
+          length :: pos_integer(),
+          version :: version()
          }).
 -type parser() :: #parser{}.
 
 -type event_fun() :: fun((event()) -> any()).
-
-%%-----------------------------------------------------------------------------
-%% Types
-%%-----------------------------------------------------------------------------
 
 -type proplist() :: proplists:proplist().
 -type socket() :: inet:socket().
@@ -102,7 +95,11 @@
                      | quorum
                      | all
                      | local_quorum
-                     | each_quorum.
+                     | each_quorum
+                     | local_one.
+
+-type serial_consistency() :: serial
+                            | local_serial.
 
 -type event_type() :: topology_change
                     | status_change
@@ -164,8 +161,6 @@
 
 -type inet() :: {inet:ip_address(), inet:port_number()}.
 
-%% Types ----------------------------------------------------------------------
-
 -type uuid() :: bitstring().
 
 -type native_type() :: binary()
@@ -189,21 +184,6 @@
 
 -type values() :: [type() | {option(), type()}].
 
-%%-----------------------------------------------------------------------------
-%% Logging macros
-%%-----------------------------------------------------------------------------
-
--ifdef(ERLCQL_NO_LOGS).
--define(ERROR(Format, Data), begin Format, Data, ok end).
--define(EMERGENCY(Format, Data), begin Format, Data, ok end).
--define(ALERT(Format, Data), begin Format, Data, ok end).
--define(CRITICAL(Format, Data), begin Format, Data, ok end).
--define(WARNING(Format, Data), begin Format, Data, ok end).
--define(INFO(Format, Data), begin Format, Data, ok end).
--define(NOTICE(Format, Data), begin Format, Data, ok end).
--define(DEBUG(Format, Data), begin Format, Data, ok end).
--else.
--ifdef(ERLCQL_LAGER).
 -compile({parse_transform, lager_transform}).
 -define(EMERGENCY(Format, Data), lager:emergency(Format, Data)).
 -define(ALERT(Format, Data), lager:alert(Format, Data)).
@@ -213,17 +193,6 @@
 -define(NOTICE(Format, Data), lager:notice(Format, Data)).
 -define(INFO(Format, Data), lager:info(Format, Data)).
 -define(DEBUG(Format, Data), lager:debug(Format, Data)).
--else.
--define(ERROR(Format, Data), error_logger:error_msg(Format ++ "~n", Data)).
--define(EMERGENCY(Format, Data), ?ERROR(Format, Data)).
--define(ALERT(Format, Data), ?ERROR(Format, Data)).
--define(CRITICAL(Format, Data), ?ERROR(Format, Data)).
--define(WARNING(Format, Data), error_logger:warning_msg(Format ++ "~n", Data)).
--define(INFO(Format, Data), error_logger:info_msg(Format ++ "~n", Data)).
--define(NOTICE(Format, Data), ?INFO(Format, Data)).
--define(DEBUG(Format, Data), ?INFO(Format, Data)).
--endif.
--endif.
 
 -define(EMERGENCY(Format), ?EMERGENCY(Format, [])).
 -define(ALERT(Format), ?ALERT(Format, [])).

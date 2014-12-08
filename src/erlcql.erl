@@ -18,16 +18,15 @@
 %% FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 %% IN THE SOFTWARE.
 
-%% @doc API module.
-%% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
 -module(erlcql).
 
-%% API
--export([start_link/0,
-         start_link/1,
-         start_link/2]).
--export([q/2, q/3,
-         e/3, e/4]).
+-export([start_link/0]).
+-export([start_link/1]).
+-export([start_link/2]).
+-export([q/2]).
+-export([q/3]).
+-export([e/3]).
+-export([e/4]).
 -export([default/1]).
 
 -include("erlcql.hrl").
@@ -36,24 +35,20 @@
                         Pid :: pid(),
                         Stream :: integer()}.
 
--export_type([response/0,
-              consistency/0,
-              compression/0,
-              event_type/0,
-              event_fun/0,
-              query_ref/0]).
--export_type([values/0,
-              type/0,
-              native_type/0,
-              uuid/0,
-              collection_type/0,
-              erlcql_list/0,
-              erlcql_set/0,
-              erlcql_map/0]).
-
-%%-----------------------------------------------------------------------------
-%% API functions
-%%-----------------------------------------------------------------------------
+-export_type([response/0]).
+-export_type([consistency/0]).
+-export_type([compression/0]).
+-export_type([event_type/0]).
+-export_type([event_fun/0]).
+-export_type([query_ref/0]).
+-export_type([values/0]).
+-export_type([type/0]).
+-export_type([native_type/0]).
+-export_type([uuid/0]).
+-export_type([collection_type/0]).
+-export_type([erlcql_list/0]).
+-export_type([erlcql_set/0]).
+-export_type([erlcql_map/0]).
 
 -spec start_link() -> {ok, pid()} | ignore | {error, Reason :: term()}.
 start_link() ->
@@ -98,10 +93,14 @@ default(compression) -> false;
 default(tracing) -> false;
 default(event_handler) -> self();
 default(consistency) -> quorum;
-default(auto_reconnect) -> false;
+default(serial_consistency) -> serial;
+default(batch_type) -> logged;
 default(register) -> [];
 default(use) -> undefined;
 default(prepare) -> [];
+default(auto_reconnect) -> false;
 default(reconnect_start) -> 1000;
 default(reconnect_max) -> 30000;
-default(keepalive) -> false. 
+default(keepalive) -> false;
+default(version) -> 2;
+default(default_timeout) -> timer:seconds(5).

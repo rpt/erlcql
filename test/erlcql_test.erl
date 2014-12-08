@@ -4,7 +4,7 @@
 
 -define(CQL_VERSION, <<"3.0.0">>).
 -define(OPTS, [{cql_version, ?CQL_VERSION}]).
--define(CONSISTENCY, quorum).
+-define(CONSISTENCY, [{consistency, quorum}]).
 
 -spec create_keyspace() -> Keyspace :: bitstring().
 create_keyspace() ->
@@ -60,6 +60,11 @@ single_query(Query) ->
 -spec execute(pid(), atom(), [any()]) -> any().
 execute(Pid, Name, Values) ->
     {ok, Response} = erlcql_client:execute(Pid, Name, Values, ?CONSISTENCY),
+    Response.
+
+batch(Pid, Queries) ->
+    Opts = [{batch_type, logged} | ?CONSISTENCY],
+    {ok, Response} = erlcql_client:batch(Pid, Queries, Opts),
     Response.
 
 -spec stop_client(pid()) -> ok.

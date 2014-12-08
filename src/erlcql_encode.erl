@@ -18,79 +18,130 @@
 %% FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 %% IN THE SOFTWARE.
 
-%% @doc Native protocol request encoding.
-%% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
 -module(erlcql_encode).
 
-%% API
--export([frame/3]).
--export([startup/2,
-         credentials/1,
-         options/0,
-         'query'/2,
-         prepare/1,
-         execute/3,
-         register/1]).
+-export([frame/4]).
+-export([startup/3]).
+-export([credentials/2]).
+-export([options/1]).
+-export(['query'/3]).
+-export([prepare/2]).
+-export([execute/4]).
+-export([batch/3]).
+-export([register/2]).
+-export([auth_response/2]).
 
 -include("erlcql.hrl").
 
-%%-----------------------------------------------------------------------------
-%% API function
-%%-----------------------------------------------------------------------------
+-type query_parameters() :: [{atom(), term()}].
 
-%% @doc Encodes the entire request frame.
--spec frame(request(), tuple(), integer()) -> Frame :: iolist().
-frame({Opcode, Payload}, {Compression, _}, Stream) ->
+-spec frame(version(), request(), tuple(), integer()) -> Frame :: iolist().
+frame(V, {Opcode, Payload}, {Compression, _}, Stream) ->
     OpcodeByte = opcode(Opcode),
     {CompressionBit, Payload2} = maybe_compress(Compression, Payload),
     Length = int(iolist_size(Payload2)),
-    [<<?REQUEST:1, ?VERSION:7, 0:7, CompressionBit:1>>,
+    [<<?REQUEST:1, V:7, 0:7, CompressionBit:1>>,
      Stream, OpcodeByte, Length, Payload2].
 
-%% @doc Encodes the startup request message body.
--spec startup(compression(), bitstring()) -> {startup, iolist()}.
-startup(false, CQLVersion) ->
+-spec startup(version(), compression(), bitstring()) -> {startup, iolist()}.
+startup(_V, false, CQLVersion) ->
     {startup, string_map([{<<"CQL_VERSION">>, CQLVersion}])};
-startup(Compression, CQLVersion) ->
+startup(_V, Compression, CQLVersion) ->
     {startup, string_map([{<<"CQL_VERSION">>, CQLVersion},
                           {<<"COMPRESSION">>, compression(Compression)}])}.
 
-%% @doc Encodes the credentials request message body.
--spec credentials([{K :: bitstring(), V :: bitstring()}]) ->
+-spec credentials(version(), [{K :: bitstring(), V :: bitstring()}]) ->
           {credentials, iolist()}.
-credentials(Informations) ->
+credentials(1, Informations) ->
     {credentials, string_map(Informations)}.
 
-%% @doc Encodes the options request message body.
--spec options() -> {options, iolist()}.
-options() ->
+-spec options(version()) -> {options, iolist()}.
+options(_V) ->
     {options, []}.
 
-%% @doc Encodes the 'query' request message body.
--spec 'query'(iodata(), consistency()) -> {'query', iolist()}.
-'query'(QueryString, Consistency) ->
-    {'query', [long_string(QueryString), consistency(Consistency)]}.
+-spec 'query'(version(), iodata(), query_parameters()) ->
+          {'query', iolist()}.
+'query'(1, QueryString, Params) ->
+    Consistency = erlcql_client:get_env_opt(consistency, Params),
+    {'query', [long_string(QueryString),
+               short(consistency(Consistency))]};
+'query'(2, QueryString, Params) ->
+    Consistency = erlcql_client:get_env_opt(consistency, Params),
+    Params2 = [{values, []},
+               {skip_metadata, false} | Params],
+    {'query', [long_string(QueryString), short(consistency(Consistency)),
+               query_parameters(Params2)]}.
 
-%% @doc Encodes the prepare request message body.
--spec prepare(iodata()) -> {prepare, iolist()}.
-prepare(QueryString) ->
+query_parameters(Params) ->
+    Flags = [{values,
+              fun([])     -> false;
+                 (Values) -> erlcql_convert:to_binary(Values) end},
+             {skip_metadata, fun(Skip) -> Skip end},
+             {page_size,
+              fun(undefined) -> false;
+                 (PageSize)  -> int(PageSize) end},
+             {paging_state,
+              fun(undefined)   -> false;
+                 (PagingState) -> bytes(PagingState) end},
+             {serial_consistency,
+              fun(undefined)   -> false;
+                 (Consistency) -> short(consistency(Consistency)) end}],
+    Params2 = [{Flag, Fun(proplists:get_value(Flag, Params))}
+               || {Flag, Fun} <- Flags],
+    process_flags(Params2, fun query_flag/1).
+
+process_flags(Params, BitFun) ->
+    P = fun({_Name, false}, {S, B}) ->
+                {S, B};
+           ({Name, true}, {S, B}) ->
+                {S + BitFun(Name), B};
+           ({Name, Value}, {S, B}) ->
+                {S + BitFun(Name), [Value | B]}
+        end,
+    {Flags, Body} = lists:foldl(P, {0, []}, Params),
+    [Flags, lists:reverse(Body)].
+
+-spec query_flag(atom()) -> integer().
+query_flag(values)             -> 16#01;
+query_flag(skip_metadata)      -> 16#02;
+query_flag(page_size)          -> 16#04;
+query_flag(paging_state)       -> 16#08;
+query_flag(serial_consistency) -> 16#10.
+
+-spec prepare(version(), iodata()) -> {prepare, iolist()}.
+prepare(_V, QueryString) ->
     {prepare, [long_string(QueryString)]}.
 
-%% @doc Encodes the execute request message body.
--spec execute(binary(), values(), consistency()) -> {execute, iolist()}.
-execute(QueryId, Values, Consistency) ->
+-spec execute(version(), binary(), values(), consistency()) ->
+          {execute, iolist()}.
+execute(1, QueryId, Values, Consistency) ->
     BinaryValues = erlcql_convert:to_binary(Values),
     {execute, [short_bytes(QueryId), BinaryValues,
-               consistency(Consistency)]}.
+               short(consistency(Consistency))]};
+execute(2, QueryId, Values, Params) ->
+    Consistency = erlcql_client:get_env_opt(consistency, Params),
+    Params2 = [{values, Values},
+               {skip_metadata, false} | Params],
+    {execute, [short_bytes(QueryId), short(consistency(Consistency)),
+               query_parameters(Params2)]}.
 
-%% @doc Encodes the register request message body.
--spec register([event_type()]) -> {register, iolist()}.
-register(Events) ->
+batch(2, Queries, Params) when is_list(Queries) ->
+    BatchType = erlcql_client:get_env_opt(batch_type, Params),
+    Consistency = erlcql_client:get_env_opt(consistency, Params),
+    Queries2 = [batch_query(Q) || Q <- Queries],
+    {batch, [batch_type(BatchType), short(length(Queries)), Queries2,
+             short(consistency(Consistency))]}.
+
+batch_query({QueryId, Values}) ->
+    [1, short_bytes(QueryId), erlcql_convert:to_binary(Values)].
+
+-spec register(version(), [event_type()]) -> {register, iolist()}.
+register(_V, Events) ->
     {register, event_list(Events)}.
 
-%%-----------------------------------------------------------------------------
-%% Encode functions
-%%-----------------------------------------------------------------------------
+-spec auth_response(version(), binary()) -> {auth_response, iolist()}.
+auth_response(2, Token) ->
+    {auth_response, [bytes(Token)]}.
 
 -spec int(integer()) -> binary().
 int(X) ->
@@ -110,6 +161,11 @@ long_string(String) ->
     Length = iolist_size(String),
     [int(Length), String].
 
+-spec bytes(binary()) -> iolist().
+bytes(Bytes) ->
+    Length = iolist_size(Bytes),
+    [int(Length), Bytes].
+
 -spec short_bytes(binary()) -> iolist().
 short_bytes(Bytes) ->
     Length = iolist_size(Bytes),
@@ -122,37 +178,42 @@ string_map(KeyValues) ->
                  || {Key, Value} <- KeyValues]].
 
 -spec opcode(atom()) -> integer().
-opcode(startup) -> 1;
-opcode(credentials) -> 4;
-opcode(options) -> 5;
-opcode('query') -> 7;
-opcode(prepare) -> 9;
-opcode(execute) -> 10;
-opcode(register) -> 11.
+opcode(startup)       -> 16#01;
+opcode(credentials)   -> 16#04;
+opcode(options)       -> 16#05;
+opcode('query')       -> 16#07;
+opcode(prepare)       -> 16#09;
+opcode(execute)       -> 16#0a;
+opcode(register)      -> 16#0b;
+opcode(batch)         -> 16#0d;
+opcode(auth_response) -> 16#0f.
 
--spec consistency(consistency()) -> binary().
-consistency(any) -> short(0);
-consistency(one) -> short(1);
-consistency(two) -> short(2);
-consistency(three) -> short(3);
-consistency(quorum) -> short(4);
-consistency(all) -> short(5);
-consistency(local_quorum) -> short(6);
-consistency(each_quorum) -> short(7).
+-spec consistency(consistency()) -> integer().
+consistency(any)          -> 16#00;
+consistency(one)          -> 16#01;
+consistency(two)          -> 16#02;
+consistency(three)        -> 16#03;
+consistency(quorum)       -> 16#04;
+consistency(all)          -> 16#05;
+consistency(local_quorum) -> 16#06;
+consistency(each_quorum)  -> 16#07;
+consistency(serial)       -> 16#08;
+consistency(local_serial) -> 16#09;
+consistency(local_one)    -> 16#0a.
+
+batch_type(logged)   -> 0;
+batch_type(unlogged) -> 1;
+batch_type(counter)  -> 2.
 
 -spec event(event_type()) -> bitstring().
 event(topology_change) -> <<"TOPOLOGY_CHANGE">>;
-event(status_change) -> <<"STATUS_CHANGE">>;
-event(schema_change) -> <<"SCHEMA_CHANGE">>.
+event(status_change)   -> <<"STATUS_CHANGE">>;
+event(schema_change)   -> <<"SCHEMA_CHANGE">>.
 
 -spec event_list([event_type()]) -> iolist().
 event_list(Events) ->
     N = length(Events),
     [short(N) | [string2(event(Event)) || Event <- Events]].
-
-%%-----------------------------------------------------------------------------
-%% Internal functions
-%%-----------------------------------------------------------------------------
 
 %% @doc Compresses the payload if compression is enabled.
 -spec maybe_compress(compression(), iolist()) -> {0 | 1, iolist()}.
@@ -171,4 +232,4 @@ maybe_compress(lz4, Payload) ->
 
 -spec compression(compression()) -> bitstring().
 compression(snappy) -> <<"snappy">>;
-compression(lz4) -> <<"lz4">>.
+compression(lz4)    -> <<"lz4">>.

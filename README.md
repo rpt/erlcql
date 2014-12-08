@@ -1,7 +1,6 @@
 # erlCQL
 
 [![Build Status][travis_ci_image]][travis_ci]
-[![Bitdeli Badge][bitdeli_image]][bitdeli]
 
 Cassandra native protocol CQL Erlang client.
 
@@ -30,6 +29,7 @@ erlcql:start_link(Options :: proplists:proplist()) ->
 | reconnect_start | pos_integer()                   | 1000              |
 | reconnect_max   | pos_integer()                   | 30000             |
 | keepalive       | boolean()                       | false             |
+| default_timeout | pos_integer()                   | 5000              |
 
 ### Query
 
@@ -61,11 +61,9 @@ erlcql:start_link(Options :: proplists:proplist()) ->
 
 ### Versions
 
-Supported versions: [`v1`][proto_v1].
+Supported versions: [`v1`][proto_v1], [`v2`][proto_v2]
 
 [travis_ci]: https://travis-ci.org/rpt/erlcql
 [travis_ci_image]: https://travis-ci.org/rpt/erlcql.png
-[bitdeli]: https://bitdeli.com/free
-[bitdeli_image]: https://d2weczhvl823v0.cloudfront.net/rpt/erlcql/trend.png
-[proto_v1]:
-https://raw.github.com/apache/cassandra/trunk/doc/native_protocol_v1.spec
+[proto_v1]: https://raw.github.com/apache/cassandra/trunk/doc/native_protocol_v1.spec
+[proto_v2]: https://raw.github.com/apache/cassandra/trunk/doc/native_protocol_v2.spec

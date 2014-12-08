@@ -18,34 +18,37 @@
 %% FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 %% IN THE SOFTWARE.
 
-%% @doc Native protocol CQL client module.
-%% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
 -module(erlcql_client).
 -behaviour(gen_fsm).
 
-%% API
 -export([start_link/1]).
--export(['query'/3, async_query/3,
-         execute/4, async_execute/4]).
--export([prepare/2, prepare/3,
-         options/1,
-         register/2]).
--export([await/1,
-         await/2]).
+-export(['query'/3]).
+-export([execute/4]).
+-export([batch/3]).
+-export([prepare/2]).
+-export([prepare/3]).
+-export([options/1]).
+-export([register/2]).
+-export([async_query/3]).
+-export([async_execute/4]).
+-export([await/1]).
+-export([await/2]).
+-export([get_env_opt/2]).
 
-%% gen_fsm callbacks
--export([init/1,
-         handle_event/3,
-         handle_sync_event/4,
-         handle_info/3,
-         code_change/4,
-         terminate/3]).
--export([startup/2,
-         startup/3,
-         ready/2,
-         ready/3]).
+-export([init/1]).
+-export([handle_event/3]).
+-export([handle_sync_event/4]).
+-export([handle_info/3]).
+-export([code_change/4]).
+-export([terminate/3]).
+-export([startup/2]).
+-export([startup/3]).
+-export([ready/2]).
+-export([ready/3]).
 
 -include("erlcql.hrl").
+-include("erlcql_metrics.hrl").
+
 
 -record(state, {
           async_ets :: ets(),
@@ -64,7 +67,8 @@
           prepare :: [{Name :: atom(), Query :: iodata()}],
           prepared_ets :: ets(),
           socket :: undefined | socket(),
-          streams = lists:seq(1, 127) :: [integer()]
+          streams = lists:seq(1, 127) :: [integer()],
+          version :: version()
          }).
 -type state() :: #state{}.
 
@@ -76,7 +80,6 @@
 -define(PREPARED_ETS_NAME, erlcql_prepared).
 -define(PREPARED_ETS_OPTS, [set, private,
                             {read_concurrency, true}]).
--define(TIMEOUT, timer:seconds(5)).
 
 -record(backoff, {
           start :: pos_integer(),
@@ -85,20 +88,16 @@
          }).
 -type backoff() :: #backoff{}.
 
-%% Start API ------------------------------------------------------------------
-
 start_link(Opts) ->
     Opts2 = [{parent, self()} | Opts],
     EventFun = event_fun(get_env_opt(event_handler, Opts)),
     Opts3 = [{event_fun, EventFun} | Opts2],
     gen_fsm:start_link(?MODULE, proplists:unfold(Opts3), []).
 
-%% Request API ----------------------------------------------------------------
-
 -spec 'query'(pid(), iodata(), consistency()) ->
           result() | {error, Reason :: term()}.
-'query'(Pid, QueryString, Consistency) ->
-    async_call(Pid, {'query', QueryString, Consistency}).
+'query'(Pid, QueryString, Params) ->
+    async_call(Pid, {'query', QueryString, Params}).
 
 -spec prepare(pid(), iodata()) -> prepared() | {error, Reason :: term()}.
 prepare(Pid, QueryString) ->
@@ -113,6 +112,11 @@ prepare(Pid, QueryString, Name) ->
 execute(Pid, QueryId, Values, Consistency) ->
     async_call(Pid, {execute, QueryId, Values, Consistency}).
 
+-spec batch(pid(), [{atom(), values()}], proplist()) ->
+          result() | {error, Reason :: term()}.
+batch(Pid, Queries, Params) ->
+    async_call(Pid, {batch, Queries, Params}).
+
 -spec options(pid()) -> supported() | {error, Reason :: term()}.
 options(Pid) ->
     async_call(Pid, options).
@@ -121,12 +125,10 @@ options(Pid) ->
 register(Pid, Events) ->
     async_call(Pid, {register, Events}).
 
-%% Async request API ----------------------------------------------------------
-
 -spec async_query(pid(), iodata(), consistency()) ->
           {ok, QueryRef :: erlcql:query_ref()} | {error, Reason :: term()}.
-async_query(Pid, QueryString, Consistency) ->
-    cast(Pid, {'query', QueryString, Consistency}).
+async_query(Pid, QueryString, Params) ->
+    cast(Pid, {'query', QueryString, Params}).
 
 -spec async_execute(pid(), erlcql:uuid() | atom(), values(), consistency()) ->
           {ok, QueryRef :: erlcql:query_ref()} | {error, Reason :: term()}.
@@ -135,11 +137,13 @@ async_execute(Pid, QueryId, Values, Consistency) ->
 
 -spec await(erlcql:query_ref()) -> response() | {error, Reason :: term()}.
 await({ok, QueryRef}) ->
-    do_await(QueryRef, ?TIMEOUT);
+    Timeout = get_env(default_timeout),
+    do_await(QueryRef, Timeout);
 await({error, _Reason} = Error) ->
     Error;
 await(QueryRef) ->
-    do_await(QueryRef, ?TIMEOUT).
+    Timeout = get_env(default_timeout),
+    do_await(QueryRef, Timeout).
 
 -spec await(erlcql:query_ref(), integer()) ->
           response() | {error, Reason :: term()}.
@@ -149,8 +153,6 @@ await({error, _Reason} = Error, _Timeout) ->
     Error;
 await(QueryRef, Timeout) ->
     do_await(QueryRef, Timeout).
-
-%% FSM: init ------------------------------------------------------------------
 
 init(Opts) ->
     State = init_state(Opts),
@@ -176,6 +178,7 @@ try_connect(#state{database = {Host, Port},
                     {ok, ready, State3};
                 {error, Reason} = Error ->
                     ?ERROR("Connection init failed: ~s", [Reason]),
+                    ok = quintana:notify_histogram(?CONNECTION_FAILURE_METRIC, 1),
                     {stop, Error}
             end;
         {error, Reason} = Error ->
@@ -197,17 +200,18 @@ init_state(Opts) ->
     Host = get_env_opt(host, Opts),
     Port = get_env_opt(port, Opts),
     Database = {Host, Port},
-    EventFun = get_opt(event_fun, Opts),
+    EventFun = get_internal_opt(event_fun, Opts),
     Events = get_env_opt(register, Opts),
     Compression = get_env_opt(compression, Opts),
     Tracing = get_env_opt(tracing, Opts),
     Flags = {Compression, Tracing},
     Keepalive = get_env_opt(keepalive, Opts),
     Keyspace = get_env_opt(use, Opts),
-    Parent = get_opt(parent, Opts),
-    Parser = erlcql_decode:new_parser(),
+    Parent = get_internal_opt(parent, Opts),
     Prepare = get_env_opt(prepare, Opts),
     PreparedETS = maybe_create_prepared_ets(Opts),
+    Version = get_env_opt(version, Opts),
+    Parser = erlcql_decode:new_parser(Version),
     #state{async_ets = AsyncETS,
            auto_reconnect = AutoReconnect,
            backoff = Backoff,
@@ -222,9 +226,8 @@ init_state(Opts) ->
            parent = Parent,
            parser = Parser,
            prepare = Prepare,
-           prepared_ets = PreparedETS}.
-
-%% State: startup -------------------------------------------------------------
+           prepared_ets = PreparedETS,
+           version = Version}.
 
 startup(reconnect, #state{backoff = Backoff,
                           database = {Host, Port},
@@ -251,6 +254,7 @@ startup(reconnect, #state{backoff = Backoff,
     end;
 startup(Event, State) ->
     ?ERROR("Bad event (startup): ~p", [Event]),
+    ok = quintana:notify_histogram(?CONNECTION_STARTUP_FAIL_METRIC, 1),
     {stop, {bad_event, Event}, State}.
 
 startup({_Ref, {'query', Query, _}}, _From, State) ->
@@ -261,6 +265,8 @@ startup({_Ref, {prepare, Query, _}}, _From, State) ->
     not_ready(prepare, Query, State);
 startup({_Ref, {execute, Query, _, _}}, _From, State) ->
     not_ready(execute, Query, State);
+startup({_Ref, {batch, _, _}}, _From, State) ->
+    not_ready(batch, State);
 startup({_Ref, options}, _From, State) ->
     not_ready(options, State);
 startup({_Ref, {register, _}}, _From, State) ->
@@ -277,68 +283,79 @@ not_ready(Request, Info, State) ->
     ?DEBUG("Connection not ready for '~s': ~p", [Request, Info]),
     {reply, {error, not_ready}, startup, State}.
 
-%% State: ready ---------------------------------------------------------------
-
 ready(Event, State) ->
     ?ERROR("Bad event (ready): ~p", [Event]),
     {stop, {bad_event, Event}, State}.
 
 ready({_Ref, _}, _From, #state{streams = []} = State) ->
     ?CRITICAL("Too many requests!"),
+    ok = quintana:notify_histogram(?CONNECTION_STREAMS_EXHAUSTED_METRIC, 1),
     {reply, {error, too_many_requests}, ready, State};
-ready({Ref, {'query', QueryString, Consistency}}, {From, _}, State) ->
-    Query = erlcql_encode:'query'(QueryString, Consistency),
+ready({Ref, {'query', QueryString, Params}}, {From, _},
+      #state{version = Version} = State) ->
+    Query = erlcql_encode:'query'(Version, QueryString, Params),
     send(Query, {Ref, From}, State);
-ready({Ref, {prepare, Query}}, {From, _}, State) ->
-    Prepare = erlcql_encode:prepare(Query),
+ready({Ref, {prepare, Query}}, {From, _},
+      #state{version = Version} = State) ->
+    Prepare = erlcql_encode:prepare(Version, Query),
     send(Prepare, {Ref, From}, State);
 ready({Ref, {prepare, Query, Name}}, {From, _},
-      #state{prepared_ets = PreparedETS} = State) ->
-    Prepare = erlcql_encode:prepare(Query),
-    Fun = fun({ok, QueryId, Types}) ->
-                  true = ets:insert(PreparedETS, {Name, Query, QueryId, Types}),
-                  {ok, QueryId};
-             ({error, _} = Response) ->
-                  Response
+      #state{prepared_ets = PreparedETS,
+             version = Version} = State) ->
+    Prepare = erlcql_encode:prepare(Version, Query),
+    Fun = fun({ok, {QueryId, RequestMetadata, _ResultMetadata}} = Response) ->
+                  Types = proplists:get_value(types, RequestMetadata),
+                  Entry = {Name, Query, QueryId, Types},
+                  true = ets:insert(PreparedETS, Entry),
+                  Response;
+             ({error, Reason}) ->
+                  {error, {Name, Query, Reason}}
           end,
     send(Prepare, {Ref, From, Fun}, State);
-ready({Ref, {execute, QueryId, Values, Consistency}},
-      {From, _}, State) when is_binary(QueryId) ->
-    Execute = erlcql_encode:execute(QueryId, Values, Consistency),
+ready({Ref, {execute, QueryId, Values, Consistency}}, {From, _},
+      #state{version = Version} = State) when is_binary(QueryId) ->
+    Execute = erlcql_encode:execute(Version, QueryId, Values, Consistency),
     send(Execute, {Ref, From}, State);
 ready({Ref, {execute, Name, Values, Consistency}}, {From, _},
-      #state{prepared_ets = PreparedETS} = State) when is_atom(Name) ->
+      #state{prepared_ets = PreparedETS,
+             version = Version} = State) when is_atom(Name) ->
     case ets:lookup(PreparedETS, Name) of
         [{Name, Query, QueryId, undefined}] ->
             ?DEBUG("Executing ~s: ~s, ~p", [Name, Query, Values]),
-            Execute = erlcql_encode:execute(QueryId, Values, Consistency),
+            Execute = erlcql_encode:execute(Version, QueryId,
+                                            Values, Consistency),
             send(Execute, {Ref, From}, State);
         [{Name, Query, QueryId, Types}] ->
             TypedValues = lists:zip(Types, Values),
             ?DEBUG("Executing ~s: ~s, ~p", [Name, Query, Values]),
-            Execute = erlcql_encode:execute(QueryId, TypedValues, Consistency),
+            Execute = erlcql_encode:execute(Version, QueryId,
+                                            TypedValues, Consistency),
             send(Execute, {Ref, From}, State);
         [] ->
             ?DEBUG("Execute failed, invalid query name: ~s", [Name]),
             {reply, {error, invalid_query_name}, ready, State}
     end;
-ready({Ref, options}, {From, _}, State) ->
-    Options = erlcql_encode:options(),
+ready({Ref, {batch, Queries, Params}}, {From, _},
+       #state{prepared_ets = PreparedETS,
+              version = Version} = State) ->
+    case expand_prepared(PreparedETS, Queries, []) of
+        {error, Error} ->
+            {reply, {error, Error}, ready, State};
+        Queries2 ->
+            Batch = erlcql_encode:batch(Version, Queries2, Params),
+            send(Batch, {Ref, From}, State)
+    end;
+ready({Ref, options}, {From, _}, #state{version = Version} = State) ->
+    Options = erlcql_encode:options(Version),
     send(Options, {Ref, From}, State);
-ready({Ref, {register, Events}}, {From, _}, State) ->
-    Register = erlcql_encode:register(Events),
+ready({Ref, {register, Events}}, {From, _},
+      #state{version = Version} = State) ->
+    Register = erlcql_encode:register(Version, Events),
     send(Register, {Ref, From}, State);
 ready(Event, _From, State) ->
     ?ERROR("Bad event (ready/sync): ~p", [Event]),
     {stop, {bad_event, Event}, State}.
 
-%% FSM: event handling --------------------------------------------------------
-
-handle_event({timeout, Stream}, StateName,
-             #state{async_ets = AsyncETS,
-                    streams = Streams} = State) ->
-    true = ets:delete(AsyncETS, Stream),
-    {next_state, StateName, State#state{streams = [Stream | Streams]}};
 handle_event(Event, StateName, State) ->
     ?ERROR("Bad event (~s/handle_event): ~p", [StateName, Event]),
     {stop, {bad_event, Event}, State}.
@@ -354,18 +371,22 @@ handle_info({tcp, Socket, Data}, ready, #state{socket = Socket} = State) ->
 handle_info({tcp_closed, Socket}, _StateName,
             #state{socket = Socket, auto_reconnect = false} = State) ->
     ?ERROR("TCP socket ~p closed", [Socket]),
+    ok = quintana:notify_histogram(?CONNECTION_SOCKET_CLOSED, 1),
     {stop, tcp_closed, State};
 handle_info({tcp_closed, Socket}, _StateName,
             #state{socket = Socket, auto_reconnect = true} = State) ->
     ?WARNING("TCP socket ~p closed", [Socket]),
+    ok = quintana:notify_histogram(?CONNECTION_SOCKET_CLOSED, 1),
     try_again(State);
 handle_info({tcp_error, Socket, Reason}, _StateName,
             #state{socket = Socket, auto_reconnect = false} = State) ->
     ?ERROR("TCP socket ~p error: ~p", [Socket, Reason]),
+    ok = quintana:notify_histogram(?CONNECTION_SOCKET_ERROR, 1),
     {stop, {tcp_error, Reason}, State};
 handle_info({tcp_error, Socket, Reason}, _StateName,
             #state{socket = Socket, auto_reconnect = true} = State) ->
     ?WARNING("TCP socket ~p error: ~p", [Socket, Reason]),
+    ok = quintana:notify_histogram(?CONNECTION_SOCKET_ERROR, 1),
     try_again(State);
 handle_info(Info, StateName, State) ->
     ?ERROR("Bad info (~s/handle_info): ~p", [StateName, Info]),
@@ -377,18 +398,25 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 terminate(_Reason, _StateName, #state{socket = Socket}) ->
     close_socket(Socket).
 
-%%-----------------------------------------------------------------------------
-%% Internal functions
-%%-----------------------------------------------------------------------------
+-spec expand_prepared(ets(), [{atom(), values()}], [{binary(), values()}]) ->
+          [{binary(), values()}] | {error, invalid_query_name}.
+expand_prepared(_, [], Acc) ->
+    lists:reverse(Acc);
+expand_prepared(ETS, [{Name, Values} | Qs], Acc) when is_atom(Name) ->
+    case ets:lookup(ETS, Name) of
+        [{Name, _Query, QueryId, undefined}] ->
+            expand_prepared(ETS, Qs, [{QueryId, Values} | Acc]);
+        [{Name, _Query, QueryId, Types}] ->
+            TypedValues = lists:zip(Types, Values),
+            expand_prepared(ETS, Qs, [{QueryId, TypedValues} | Acc]);
+        [] ->
+            {error, invalid_query_name}
+    end.
 
 -spec maybe_create_prepared_ets(proplist()) -> ets().
 maybe_create_prepared_ets(Opts) ->
-   case get_opt(prepared_statements_ets_tid, Opts) of
-       undefined ->
-           ets:new(?PREPARED_ETS_NAME, ?PREPARED_ETS_OPTS);
-       Tid ->
-           Tid
-   end.
+    New = fun() -> ets:new(?PREPARED_ETS_NAME, ?PREPARED_ETS_OPTS) end,
+    get_opt(prepared_statements_ets_tid, Opts, New).
 
 -spec event_fun(event_fun() | pid()) -> event_fun().
 event_fun(Fun) when is_function(Fun) ->
@@ -419,8 +447,9 @@ apply_funs([Fun | Rest], State) ->
     end.
 
 -spec send_options(state()) -> {ok, state()} | {error, Reason :: term()}.
-send_options(#state{cql_version = undefined} = State) ->
-    Options = erlcql_encode:options(),
+send_options(#state{cql_version = undefined,
+                    version = Version} = State) ->
+    Options = erlcql_encode:options(Version),
     ok = send_request(Options, 0, State),
     case wait_for_response(State) of
         {ok, Supported} ->
@@ -435,8 +464,9 @@ send_options(State) ->
 
 -spec send_startup(state()) -> {ok, state()} | {error, Reason :: term()}.
 send_startup(#state{flags = {Compression, Tracing},
-                    cql_version = CQLVersion} = State) ->
-    Startup = erlcql_encode:startup(Compression, CQLVersion),
+                    cql_version = CQLVersion,
+                    version = Version} = State) ->
+    Startup = erlcql_encode:startup(Version, Compression, CQLVersion),
     ok = send_request(Startup, 0, State#state{flags = {false, Tracing}}),
     wait_for_ready(State).
 
@@ -458,10 +488,11 @@ wait_for_ready(State) ->
 
 -spec try_auth(bitstring(), state()) -> ok | {error, term()}.
 try_auth(<<"org.apache.cassandra.auth.PasswordAuthenticator">>,
-         #state{credentials = {Username, Password}} = State) ->
+         #state{credentials = {Username, Password},
+                version = Version} = State) ->
     Map = [{<<"username">>, Username},
            {<<"password">>, Password}],
-    Credentials = erlcql_encode:credentials(Map),
+    Credentials = erlcql_encode:credentials(Version, Map),
     ok = send_request(Credentials, 0, State);
 try_auth(Other, _State) ->
     {error, {unknown_auth_class, Other}}.
@@ -471,8 +502,9 @@ register_to_events(#state{events = undefined} = State) ->
     {ok, State};
 register_to_events(#state{events = []} = State) ->
     {ok, State};
-register_to_events(#state{events = Events} = State) ->
-    Register = erlcql_encode:register(Events),
+register_to_events(#state{events = Events,
+                          version = Version} = State) ->
+    Register = erlcql_encode:register(Version, Events),
     ok = send_request(Register, 0, State),
     case wait_for_response(State) of
         ready ->
@@ -484,8 +516,10 @@ register_to_events(#state{events = Events} = State) ->
 -spec use_keyspace(state()) -> {ok, state()} | {error, Reason :: term()}.
 use_keyspace(#state{keyspace = undefined} = State) ->
     {ok, State};
-use_keyspace(#state{keyspace = Keyspace} = State) ->
-    Use = erlcql_encode:'query'([<<"USE ">>, Keyspace], any),
+use_keyspace(#state{keyspace = Keyspace,
+                    version = Version} = State) ->
+    Use = erlcql_encode:'query'(Version, [<<"USE ">>, Keyspace],
+                                [{consistency, any}]),
     ok = send_request(Use, 0, State),
     case wait_for_response(State) of
         {ok, Keyspace} ->
@@ -505,11 +539,13 @@ prepare_queries(#state{prepare = Queries} = State) ->
 prepare_queries([], State) ->
     {ok, State};
 prepare_queries([{Name, Query} | Rest],
-                #state{prepared_ets = PreparedETS} = State) ->
-    Prepare = erlcql_encode:prepare(Query),
+                #state{prepared_ets = PreparedETS,
+                       version = Version} = State) ->
+    Prepare = erlcql_encode:prepare(Version, Query),
     ok = send_request(Prepare, 0, State),
     case wait_for_response(State) of
-        {ok, QueryId, Types} ->
+        {ok, {QueryId, RequestMetadata, _}} ->
+            Types = proplists:get_value(types, RequestMetadata),
             true = ets:insert(PreparedETS, {Name, Query, QueryId, Types}),
             prepare_queries(Rest, State);
         {error, _Reason} = Error ->
@@ -518,8 +554,9 @@ prepare_queries([{Name, Query} | Rest],
 
 -spec send_request(request(), integer(), state()) -> ok.
 send_request(Body, Stream, #state{socket = Socket,
-                                  flags = Flags}) ->
-    Frame = erlcql_encode:frame(Body, Flags, Stream),
+                                  flags = Flags,
+                                  version = Version}) ->
+    Frame = erlcql_encode:frame(Version, Body, Flags, Stream),
     ok = gen_tcp:send(Socket, Frame).
 
 -spec wait_for_response(state()) ->
@@ -547,8 +584,9 @@ wait_for_body(<<_:32, Length:32>> = Header,
 
 -spec decode_response(binary(), state()) ->
           ready() | authenticate() | response() | {error, term()}.
-decode_response(Binary, #state{flags = {Compression, _}}) ->
-    case erlcql_decode:decode(Binary, Compression) of
+decode_response(Binary, #state{version = Version,
+                               flags = {Compression, _}}) ->
+    case erlcql_decode:decode(Version, Binary, Compression) of
         {ok, 0, Response, <<>>} ->
             Response;
         {error, _} = Error ->
@@ -594,12 +632,12 @@ cast(Pid, Request) ->
 
 -spec do_await(erlcql:query_ref(), integer()) ->
           response() | {error, Reason :: term()}.
-do_await({Ref, Pid, Stream}, Timeout) ->
+do_await({Ref, _Pid, _Stream}, Timeout) ->
     receive
         {Ref, Response} ->
             Response
     after Timeout ->
-            gen_fsm:send_all_state_event(Pid, {timeout, Stream}),
+            ok = quintana:notify_histogram(?CONNECTION_QUERY_TIMEOUT, 1),
             {error, timeout}
     end.
 
@@ -617,12 +655,14 @@ parse_response(Data, #state{parser = Parser,
     case erlcql_decode:parse(Data, Parser, Compression) of
         {ok, Responses, Parser2} ->
             State2 = handle_responses(Responses, State),
-            {next_state, ready, State2#state{parser = Parser2}};
+            {next_state, ready, State2#state{parser = Parser2}, hibernate};
         {error, Reason} ->
             ?ERROR("Parsing response failed: ~p", [Reason]),
+            ok = quintana:notify_histogram(?CONNECTION_PARSE_ERROR, 1),
             {stop, Reason, State}
     end.
 
+handle_responses([], State) -> State;
 handle_responses(Responses, State) ->
     lists:foldl(fun handle_response/2, State, Responses).
 
@@ -640,18 +680,16 @@ handle_response({Stream, Response}, #state{async_ets = AsyncETS} = State) ->
             send_response(Stream, {Ref, Response2}, Pid, State);
         [] ->
             ?WARNING("Unexpected response (~p): ~p", [Stream, Response]),
+            ok = quintana:notify_histogram(?CONNECTION_UNEXPECTED_RESPONSE, 1),
             State
     end.
 
 -spec send_response(integer(), {erlcql:query_ref(), erlcql:response()},
                     pid(), state()) -> state().
-send_response(Stream, Response, Pid, #state{async_ets = AsyncETS,
-                                            streams = Streams} = State) ->
-    true = ets:delete(AsyncETS, Stream),
+send_response(Stream, Response, Pid, State=#state{async_ets = AsyncETS, streams = Streams}) ->
     Pid ! Response,
+    true = ets:delete(AsyncETS, Stream),
     State#state{streams = [Stream | Streams]}.
-
-%% Helper functions -----------------------------------------------------------
 
 -spec get_env_opt(term(), proplist()) -> Value :: term().
 get_env_opt(Opt, Opts) ->
@@ -662,11 +700,22 @@ get_env_opt(Opt, Opts) ->
             get_env(Opt)
     end.
 
+get_internal_opt(Opt, Opts) ->
+    {Opt, Value} = lists:keyfind(Opt, 1, Opts),
+    Value.
+
 -spec get_opt(term(), proplist()) -> Value :: term().
 get_opt(Opt, Opts) ->
     get_opt(Opt, Opts, undefined).
 
--spec get_opt(term(), proplist(), term()) -> Value :: term().
+-spec get_opt(term(), proplist(), term() | function()) -> Value :: term().
+get_opt(Opt, Opts, Default) when is_function(Default) ->
+    case lists:keyfind(Opt, 1, Opts) of
+        {Opt, Value} ->
+            Value;
+        false ->
+            Default()
+    end;
 get_opt(Opt, Opts, Default) ->
     case lists:keyfind(Opt, 1, Opts) of
         {Opt, Value} ->

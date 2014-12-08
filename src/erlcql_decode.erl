@@ -18,30 +18,21 @@
 %% FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 %% IN THE SOFTWARE.
 
-%% @doc Native protocol decoder/parser.
-%% @author Krzysztof Rutka <krzysztof.rutka@gmail.com>
 -module(erlcql_decode).
 
-%% API
--export([new_parser/0,
-         parse/3]).
-
--export([decode/2]).
+-export([new_parser/1]).
+-export([parse/3]).
+-export([decode/3]).
 
 -include("erlcql.hrl").
 
 -define(STRING(Length), Length/bytes).
+-define(BYTES(Length), Length/bytes).
 
-%%-----------------------------------------------------------------------------
-%% API functions
-%%-----------------------------------------------------------------------------
+-spec new_parser(version()) -> parser().
+new_parser(Version) ->
+    #parser{version = Version}.
 
-%% @doc Returns a new parser.
--spec new_parser() -> parser().
-new_parser() ->
-    #parser{}.
-
-%% @doc Parses given data using a parser.
 -spec parse(binary(), parser(), compression()) ->
           {ok, Responses :: [{Stream :: integer(),
                               Response :: response()}],
@@ -51,10 +42,6 @@ parse(Data, #parser{buffer = Buffer} = Parser, Compression) ->
     NewBuffer = <<Buffer/binary, Data/binary>>,
     NewParser = Parser#parser{buffer = NewBuffer},
     parse_loop(NewParser, Compression, []).
-
-%%-----------------------------------------------------------------------------
-%% Parser functions
-%%-----------------------------------------------------------------------------
 
 -spec parse_loop(parser(), compression(), [{integer(), response()}]) ->
           {ok, Responses :: [{Stream :: integer(),
@@ -90,8 +77,9 @@ get_length(#parser{length = undefined, buffer = Buffer} = Parser) ->
     Parser#parser{length = Length + 8};
 get_length(Parser) -> Parser.
 
-run_decode(#parser{buffer = Buffer} = Parser, Compression) ->
-    case decode(Buffer, Compression) of
+run_decode(#parser{version = Version,
+                   buffer = Buffer} = Parser, Compression) ->
+    case decode(Version, Buffer, Compression) of
         {ok, Stream, Response, Leftovers} ->
             NewParser = Parser#parser{length = undefined,
                                       buffer = Leftovers},
@@ -100,20 +88,16 @@ run_decode(#parser{buffer = Buffer} = Parser, Compression) ->
             {error, Other}
     end.
 
-%%-----------------------------------------------------------------------------
-%% Decode functions
-%%-----------------------------------------------------------------------------
-
--spec decode(binary(), compression()) ->
+-spec decode(version(), binary(), compression()) ->
           {ok, Stream :: integer(), Response :: response(), Rest :: binary()} |
           {error, Reason :: term()}.
-decode(<<?RESPONSE:1, ?VERSION:7, _Flags:7, Decompress:1,
-         Stream:8/signed, Opcode:8, Length:32, Data:Length/binary,
-         Rest/binary>>, Compression) ->
+decode(V, <<?RESPONSE:1, V:7, _Flags:7, Decompress:1,
+            Stream:8/signed, Opcode:8, Length:32, Data:Length/binary,
+            Rest/binary>>, Compression) ->
     Data2 = maybe_decompress(Decompress, Compression, Data),
     Response = case opcode(Opcode) of
-                   error ->
-                       error2(Data2);
+                   cql_error ->
+                       cql_error(Data2);
                    ready ->
                        ready(Data2);
                    authenticate ->
@@ -123,11 +107,18 @@ decode(<<?RESPONSE:1, ?VERSION:7, _Flags:7, Decompress:1,
                    result ->
                        result(Data2);
                    event ->
-                       event(Data2)
+                       event(Data2);
+                   auth_challenge ->
+                       auth_challenge(Data2);
+                   auth_success ->
+                       auth_success(Data2)
                end,
     {ok, Stream, Response, Rest};
-decode(_Other, _Compression) ->
-    {error, bad_header}.
+decode(_V, <<_Other:32, Length:32, _Data:Length/binary,
+             _Rest/binary>>, _Compression) ->
+    {error, bad_header};
+decode(_V, _Other, _Compression) ->
+    {error, binary_too_small}.
 
 -spec maybe_decompress(0 | 1, compression(), binary()) -> binary().
 maybe_decompress(0, _Compression, Data) ->
@@ -140,17 +131,17 @@ maybe_decompress(1, lz4, <<Size:32, Data/binary>>) ->
     UnpackedData.
 
 -spec opcode(integer()) -> response_opcode().
-opcode(16#00) -> error;
+opcode(16#00) -> cql_error;
 opcode(16#02) -> ready;
 opcode(16#03) -> authenticate;
 opcode(16#06) -> supported;
 opcode(16#08) -> result;
-opcode(16#0c) -> event.
+opcode(16#0c) -> event;
+opcode(16#0e) -> auth_challenge;
+opcode(16#10) -> auth_success.
 
-%% Error ----------------------------------------------------------------------
-
--spec error2(binary()) -> cql_error().
-error2(<<ErrorCode:?INT, Data/binary>>) ->
+-spec cql_error(binary()) -> cql_error().
+cql_error(<<ErrorCode:?INT, Data/binary>>) ->
     Error = case error_code(ErrorCode) of
                 unavailable_exception ->
                     unavailable_exception(Data);
@@ -171,7 +162,7 @@ error2(<<ErrorCode:?INT, Data/binary>>) ->
 
 -spec error_code(integer()) -> error_code().
 error_code(16#0000) -> server_error;
-error_code(16#000A) -> protocol_error;
+error_code(16#000a) -> protocol_error;
 error_code(16#0100) -> bad_credentials;
 error_code(16#1000) -> unavailable_exception;
 error_code(16#1001) -> overloaded;
@@ -244,19 +235,13 @@ consistency(5) -> all;
 consistency(6) -> local_quorum;
 consistency(7) -> each_quorum.
 
-%% Ready ----------------------------------------------------------------------
-
 -spec ready(binary()) -> ready.
 ready(<<>>) ->
     ready.
 
-%% Authenticate ---------------------------------------------------------------
-
 -spec authenticate(binary()) -> authenticate().
 authenticate(<<Length:?SHORT, AuthClass:?STRING(Length)>>) ->
     {authenticate, AuthClass}.
-
-%% Supported ------------------------------------------------------------------
 
 -spec supported(binary()) -> supported().
 supported(<<N:?SHORT, Data/binary>>) ->
@@ -280,8 +265,6 @@ supported_list(N, <<Length:?SHORT, Value:Length/binary,
                     Rest/binary>>, Values) ->
     supported_list(N - 1, Rest, [Value | Values]).
 
-%% Result ---------------------------------------------------------------------
-
 -spec result(binary()) -> result().
 result(<<Kind:?INT, Data/binary>>) ->
     case result_kind(Kind) of
@@ -304,46 +287,58 @@ result_kind(16#0003) -> set_keyspace;
 result_kind(16#0004) -> prepared;
 result_kind(16#0005) -> schema_change.
 
-%% Result: Void
-
 -spec void(binary()) -> void().
 void(<<>>) ->
     {ok, void}.
 
-%% Result: Rows
-
 -spec rows(binary()) -> rows().
 rows(Data) ->
-    {ColumnCount, ColumnSpecs, RowData} = metadata(Data),
+    {ColumnCount, Metadata, RowData} = metadata(Data),
     <<RowCount:?INT, RowContent/binary>> = RowData,
-    {_, ColumnTypes} = lists:unzip(ColumnSpecs),
-    Rows = rows(RowCount, ColumnCount, ColumnTypes, RowContent, []),
-    {ok, {Rows, ColumnSpecs}}.
+    Types = proplists:get_value(types, Metadata),
+    Rows = rows(RowCount, ColumnCount, Types, RowContent, []),
+    {ok, {Rows, Metadata}}.
 
 -spec metadata(binary()) -> {integer(), column_specs(), Rest :: binary()}.
-metadata(<<_:31, 0:1, ColumnCount:?INT, ColumnData/binary>>) ->
-    {ColumnSpecs, Rest} = column_specs(false, ColumnCount, ColumnData, []),
-    {ColumnCount, ColumnSpecs, Rest};
-metadata(<<_:31, 1:1, ColumnCount:?INT,
-           Length:?SHORT, _Keyspace:?STRING(Length),
-           Length2:?SHORT, _Table:?STRING(Length2), ColumnData/binary>>) ->
-    {ColumnSpecs, Rest} = column_specs(true, ColumnCount, ColumnData, []),
-    {ColumnCount, ColumnSpecs, Rest}.
+metadata(<<_:29, NoMetadata:1, HasMorePages:1, GlobalSpec:1,
+           ColumnCount:?INT, Rest/binary>>) ->
+    {Params2, Rest2} = maybe_more_pages(HasMorePages, [], Rest),
+    {Params3, Rest3} = maybe_global_spec(GlobalSpec, Params2, Rest2),
+    {Params4, Rest4} = maybe_column_spec(NoMetadata, GlobalSpec,
+                                         ColumnCount, Params3, Rest3),
+    {ColumnCount, Params4, Rest4}.
 
--spec column_specs(boolean(), integer(), binary(), column_specs()) ->
+maybe_more_pages(0, Params, Data) -> {Params, Data};
+maybe_more_pages(1, Params, Data) ->
+    <<Length:?INT, PagingState:?BYTES(Length), Rest/binary>> = Data,
+    {[{paging_state, PagingState} | Params], Rest}.
+
+maybe_global_spec(0, Params, Data) -> {Params, Data};
+maybe_global_spec(1, Params, Data) ->
+    <<Length:?SHORT, Keyspace:?STRING(Length),
+      Length2:?SHORT, Table:?STRING(Length2), Rest/binary>> = Data,
+    {[{keyspace, Keyspace}, {table, Table} | Params], Rest}.
+
+maybe_column_spec(1, _, 0, Params, Data) -> {Params, Data};
+maybe_column_spec(0, Global, N, Params, Data) ->
+    {Columns, Types, Rest} = column_specs(Global == 1, N, Data, [], []),
+    {[{columns, Columns}, {types, Types} | Params], Rest}.
+
+-spec column_specs(boolean(), integer(), binary(), column_specs(), term()) ->
           {column_specs(), Rest :: binary()}.
-column_specs(_Global, 0, Rest, ColumnSpecs) ->
-    {lists:reverse(ColumnSpecs), Rest};
-column_specs(true, N, <<Length:?SHORT, Name:?STRING(Length), TypeData/binary>>,
-             ColumnSpecs) ->
+column_specs(_, 0, Rest, Columns, Types) ->
+    {lists:reverse(Columns), lists:reverse(Types), Rest};
+column_specs(true, N, <<Length:?SHORT, Column:?STRING(Length), TypeData/binary>>,
+             Columns, Types) ->
     {Type, Rest} = option(TypeData),
-    column_specs(true, N - 1, Rest, [{Name, Type} | ColumnSpecs]);
+    column_specs(true, N - 1, Rest, [Column | Columns], [Type | Types]);
 column_specs(false, N, <<Length:?SHORT, _Keyspace:?STRING(Length),
                          Length2:?SHORT, _Table:?STRING(Length2),
-                         Length3:?SHORT, Name:?STRING(Length3), TypeData/binary>>,
-             ColumnSpecs) ->
+                         Length3:?SHORT, Column:?STRING(Length3),
+                         TypeData/binary>>,
+             Columns, Types) ->
     {Type, Rest} = option(TypeData),
-    column_specs(false, N - 1, Rest, [{Name, Type} | ColumnSpecs]).
+    column_specs(false, N - 1, Rest, [Column | Columns], [Type | Types]).
 
 -spec option(binary()) -> {option(), Rest :: binary()}.
 option(<<Id:?SHORT, Data/binary>>) ->
@@ -410,29 +405,21 @@ row_values(N, [Type | Types], <<Length:?INT, Value:Length/binary,
     Value2 = erlcql_convert:from_binary(Type, Value),
     row_values(N - 1, Types, Rest, [Value2 | Values]).
 
-%% Result: Set keyspace
-
 -spec set_keyspace(binary()) -> set_keyspace().
 set_keyspace(<<Length:?SHORT, Keyspace:Length/binary>>) ->
     {ok, Keyspace}.
 
-%% Result: Prepared
-
 -spec prepared(binary()) -> {ok, bitstring(), [option()]}.
-prepared(<<Length:?SHORT, QueryId:Length/binary, Metadata/binary>>) ->
-    {_ColumnCount, ColumnSpecs, <<>>} = metadata(Metadata),
-    {_, ColumnTypes} = lists:unzip(ColumnSpecs),
-    {ok, QueryId, ColumnTypes}.
-
-%% Result: Schema change
+prepared(<<Length:?SHORT, QueryId:Length/binary, Data/binary>>) ->
+    {_ColumnCount, RequestMetadata, Rest} = metadata(Data),
+    {_, ResultMetadata, <<>>} = metadata(Rest),
+    {ok, {QueryId, RequestMetadata, ResultMetadata}}.
 
 -spec schema_change(binary()) -> schema_change().
 schema_change(<<Length:?SHORT, Type:Length/binary,
                 Length2:?SHORT, _Keyspace:Length2/binary,
                 Length3:?SHORT, _Table:Length3/binary>>) ->
     {ok, schema_change_type(Type)}.
-
-%% Event ----------------------------------------------------------------------
 
 -spec event(binary()) -> event_res().
 event(<<Length:?SHORT, Type:?STRING(Length), Data/binary>>) ->
@@ -448,8 +435,8 @@ event(<<Length:?SHORT, Type:?STRING(Length), Data/binary>>) ->
 
 -spec event_type(bitstring()) -> event_type().
 event_type(<<"TOPOLOGY_CHANGE">>) -> topology_change;
-event_type(<<"STATUS_CHANGE">>) -> status_change;
-event_type(<<"SCHEMA_CHANGE">>) -> schema_change.
+event_type(<<"STATUS_CHANGE">>)   -> status_change;
+event_type(<<"SCHEMA_CHANGE">>)   -> schema_change.
 
 -spec topology_change_event(binary()) ->
           {topology_change, Type :: atom(), Inet :: inet()}.
@@ -457,7 +444,7 @@ topology_change_event(<<Length:?SHORT, Type:?STRING(Length), Data/binary>>) ->
     {topology_change, topology_change_type(Type), inet(Data)}.
 
 -spec topology_change_type(bitstring()) -> atom().
-topology_change_type(<<"NEW_NODE">>) -> new_node;
+topology_change_type(<<"NEW_NODE">>)     -> new_node;
 topology_change_type(<<"REMOVED_NODE">>) -> removed_node.
 
 -spec status_change_event(binary()) ->
@@ -466,7 +453,7 @@ status_change_event(<<Length:?SHORT, Type:?STRING(Length), Data/binary>>) ->
     {status_change, status_change_type(Type), inet(Data)}.
 
 -spec status_change_type(bitstring()) -> atom().
-status_change_type(<<"UP">>) -> up;
+status_change_type(<<"UP">>)   -> up;
 status_change_type(<<"DOWN">>) -> down.
 
 -spec schema_change_event(binary()) ->
@@ -492,3 +479,10 @@ inet(4, <<A:8, B:8, C:8, D:8, Port:?INT>>) ->
 inet(16, <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16, Port:?INT>>) ->
     {{A, B, C, D, E, F, G, H}, Port}.
 
+-spec auth_challenge(binary()) -> {auth_challenge, binary()}.
+auth_challenge(<<Length:?INT, Token:Length/binary>>) ->
+    {auth_challenge, Token}.
+
+-spec auth_success(binary()) -> {auth_success, binary()}.
+auth_success(<<Length:?INT, Token:Length/binary>>) ->
+    {auth_success, Token}.
